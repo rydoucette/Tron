@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/tron.dir/tron.c.o -o tron  -Wl,-rpath,/home/ryand/projects/tron/build libSDL3_ttf.so.0.3.0 libSDL3.so.0.3.0 

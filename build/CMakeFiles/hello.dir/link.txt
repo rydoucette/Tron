@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/hello.dir/hello.c.o -o hello  -Wl,-rpath,/home/ryand/projects/snake/build libSDL3.so.0.3.0 
