@@ -8,6 +8,21 @@
   Permission is granted to anyone to use this software for any purpose,
   including commercial applications, and to alter it and redistribute it
   freely.
+
+  TODO
+    ~ Bugs ~
+    ~ Features ~
+    * Add AI for computer players
+    * Add support for more players/computers
+    * Add visual effects - tail, where you crashed
+    * Add items
+    * add AI difficulty levels
+    ~ Maintenance ~
+    * Seperate code into different files
+    * Better null checks,logging and error handling
+    * State machine & simplify iterat into calling functions depending on state 
+    * Menu handling: Reduce repeated code, add color for msg2
+    * Documentation
 */
 #define SDL_MAIN_USE_CALLBACKS 1  /* use the callbacks instead of main() */
 #include <stdio.h>
@@ -61,6 +76,7 @@ typedef struct
     int head_ypos;
     char next_dir;
     int player_id;
+    bool is_computer;
 } CharacterContext;
 
 // possible direction
@@ -79,7 +95,7 @@ SDL_Scancode player_keys[PLAYER_COUNT][4] = {
 };
 
 // Starting off positions for the players
-int player_positions[PLAYER_COUNT][2] = {
+int starting_positions[PLAYER_COUNT][2] = {
     {GAME_WIDTH / 4, GAME_HEIGHT / 2},    // Player 1
     {3 * GAME_WIDTH / 4, GAME_HEIGHT / 2} // Player 2
 };
@@ -93,7 +109,8 @@ typedef struct
     Cell matrix[GAME_WIDTH][GAME_HEIGHT];
     State state;
     GameMode game_mode;
-    int num_players;
+    int num_human_players;
+    int num_computer_players;
     int winner;
     Uint64 pause_time;
     Uint64 last_step;
@@ -117,7 +134,6 @@ typedef struct
 typedef struct
 {
     Menu menu;
-    //todo add the things that make a start menu special
 } StartMenu;
 
 // Colors
@@ -157,9 +173,6 @@ void set_sdl_color(SDL_Renderer *renderer, const SDL_Color *color) {
 }
 
 static void draw_menu(SDL_Renderer *renderer, Menu menu) {
-    /*
-    TODO - fix alot of duplicate code, color for msg2, check for null msg
-    */
     SDL_Texture *texture = NULL;
     SDL_Surface *surface = NULL;
     TTF_Font    *font    = NULL;
@@ -296,17 +309,40 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
     }
 }
 
-void move_player(CharacterContext *ctx, AppState *as) {
-
-    /* This should never happen since after we adjust head position we check for 
-    a collision. Adding this here for defensive programming to prevent seg faults
-    if there are any bugs in the code causing the player to move outside the bounds
-    of the game board 
-    */
+void move_computer(CharacterContext *ctx, AppState *as) {
     if (ctx->head_xpos < 0 || ctx->head_xpos >= GAME_WIDTH ||
         ctx->head_ypos < 0 || ctx->head_ypos >= GAME_HEIGHT) {
-        SDL_Log("WARNING - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
+        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
+    }   
+
+    char curr_dir = ctx->next_dir;
+
+    /*
+    DIR_RIGHT = 0
+    DIR_UP    = 1
+    DIR_LEFT  = 2
+    DIR_DOWN  = 3
+    */
+
+    for(int i = 0; i < 4; i++) {
+        //Can't go backwards
+        if(curr_dir == 0 && curr_dir == 2 ||
+           curr_dir == 1 && curr_dir == 3 ||
+           curr_dir == 2 && curr_dir == 0 ||
+           curr_dir == 3 && curr_dir == 1) {
+            continue;
+        }
     }
+
+}
+
+void move_player(CharacterContext *ctx, AppState *as) {
+    if (ctx->head_xpos < 0 || ctx->head_xpos >= GAME_WIDTH ||
+        ctx->head_ypos < 0 || ctx->head_ypos >= GAME_HEIGHT) {
+        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
+    }
+
+    //printf("Player %d: (%d, %d) - Direction: %d\n", ctx->player_id, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
 
     // Move head forward
     switch (ctx->next_dir) {
@@ -360,10 +396,15 @@ void move_characters(void *appstate)
 {
     AppState *as = (AppState *)appstate;
     CharacterContext *ctx;
-    
-    for(int i = 0; i < PLAYER_COUNT; i++) {
+    int total_players = as->num_human_players + as->num_computer_players;
+
+    for(int i = 0; i < total_players; i++) {
         ctx = &as->character_ctx[i];
-        move_player(ctx,as);
+        if(ctx->is_computer) {
+            //move_computer(ctx, as);
+        } else {
+            move_player(ctx, as);
+        }
     }
 }
 
@@ -380,58 +421,89 @@ void toggle_pause(void *appstate) {
         Uint64 paused_duration = now - as->pause_time;
         as->last_step += paused_duration;
         as->state = RUNNING;
-    } else if (as->state == START) {
-        //start_game
-        Uint64 now = SDL_GetTicks();
-        Uint64 paused_duration = now - as->pause_time;
-        as->last_step += paused_duration;
-        as->state = RUNNING;
     } else {
-        // do
+        // do nothing
     }
 }
 
-void tron_initialize(void *appstate)
-{
-    AppState *as = (AppState *)appstate;
-
-    // initalize the game board
+void initialize_game_board(Cell matrix[GAME_WIDTH][GAME_HEIGHT]) {
     for(int i = 0; i < GAME_WIDTH; i++) {
         for(int j = 0; j < GAME_HEIGHT; j++) {
-            as->matrix[i][j] = CELL_NOTHING;
+            matrix[i][j] = CELL_NOTHING;
         }
-    }
-
-    // todo -fix this condition. Need to check if its initialized
-    if(as->state == GAME_OVER || as->state == RUNNING || as->state == PAUSED) {
-        // coming from a game over screen
-        as->state = RUNNING;
-        as->last_step = SDL_GetTicks();
-    } else {
-        // coming from a fresh initialization
-        as->state = START;
-        as->pause_time = SDL_GetTicks();
-        as->game_mode = PVP;
-    }
-
-    as->num_players = PLAYER_COUNT;
-    as->last_step = SDL_GetTicks();
-
-    for(int i = 0; i < as->num_players; i++) {
-        as->character_ctx[i].player_id = i + 1;
-        as->character_ctx[i].head_xpos = player_positions[i][0];
-        as->character_ctx[i].head_ypos = player_positions[i][1];
-        if(i == 0) {
-            as->character_ctx[i].next_dir = DIR_RIGHT;
-        } else {
-            as->character_ctx[i].next_dir = DIR_LEFT;
-        }
-        
     }
 }
 
-static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
-{
+void initialize_characters(void *appstate) {
+    AppState *as = (AppState *)appstate;
+    int humans_added = 0;
+    int computers_added = 0;
+    int total_players = as->num_human_players + as->num_computer_players;
+
+    for(int i = 0; i < total_players; i++) {
+        if(humans_added < as->num_human_players) {
+            as->character_ctx[i].is_computer = false;
+            humans_added++;
+        } else {
+            as->character_ctx[i].is_computer = true;
+            computers_added++;
+        }
+
+        // Set starting positions
+        as->character_ctx[i].head_xpos = starting_positions[i][0];
+        as->character_ctx[i].head_ypos = starting_positions[i][1];
+        
+        // Set player IDs
+        if(as->character_ctx[i].is_computer) {
+            as->character_ctx[i].player_id = computers_added;
+        } else {
+            as->character_ctx[i].player_id = humans_added;
+        }
+        
+        // Set starting direction
+        switch (i) {
+        case 0:
+            as->character_ctx[i].next_dir = DIR_RIGHT;
+            break;
+        case 1:
+            as->character_ctx[i].next_dir = DIR_LEFT;
+            break;
+        case 2:
+            as->character_ctx[i].next_dir = DIR_UP;
+            break;
+        case 3:
+            as->character_ctx[i].next_dir = DIR_DOWN;
+            break;
+        default:
+            SDL_Log("ERROR - Invalid player id: %d\n", i);
+            break;
+        }
+    }
+}
+
+void start_game(void *appstate) {
+    AppState *as = (AppState *)appstate;
+
+    initialize_game_board(as->matrix);
+    as->state = RUNNING;
+    Uint64 now = SDL_GetTicks();
+    Uint64 paused_duration = now - as->pause_time;
+    as->last_step += paused_duration;
+
+    // Set the number of players and computers
+    if(as->game_mode == PVP) {
+        as->num_human_players = PLAYER_COUNT;
+        as->num_computer_players = 0;
+    } else {
+        // PVE
+        as->num_human_players = 1;
+        as->num_computer_players = 1;
+    }
+
+    initialize_characters(as);
+}
+
+static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
     AppState *as = (AppState *)appstate;
     CharacterContext *ctx;
 
@@ -450,7 +522,7 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
     case SDL_SCANCODE_KP_ENTER:
     case SDL_SCANCODE_RETURN:
         if(as->state == START) {
-            toggle_pause(as);
+            start_game(as);
         }
         break;
     /* Quit. */
@@ -460,12 +532,13 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
     /* Restart the game as if the program was launched. */
     case SDL_SCANCODE_R:
     case SDL_SCANCODE_SPACE:
-        tron_initialize(as);
+        // TODO - check state is game over?
+        start_game(as);
         break;
     /* Decide new direction of the character. */
     case SDL_SCANCODE_RIGHT:
     case SDL_SCANCODE_D:
-        if(ctx && ctx->next_dir != DIR_LEFT) {
+        if(as->state == RUNNING && ctx && ctx->next_dir != DIR_LEFT) {
             ctx->next_dir = DIR_RIGHT;
         }
         break;
@@ -474,13 +547,13 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
         if(as->state == START) {
             as->game_mode ^= 1U;
         }
-        if(ctx && ctx->next_dir != DIR_DOWN) {
+        if(as->state == RUNNING && ctx && ctx->next_dir != DIR_DOWN) {
             ctx->next_dir = DIR_UP;
         }
         break;
     case SDL_SCANCODE_LEFT:
     case SDL_SCANCODE_A:
-        if(ctx && ctx->next_dir != DIR_RIGHT) {
+        if(as->state == RUNNING && ctx && ctx->next_dir != DIR_RIGHT) {
             ctx->next_dir = DIR_LEFT;
         }
         break;
@@ -489,7 +562,7 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
         if(as->state == START) {
             as->game_mode ^= 1U;
         }
-        if(ctx && ctx->next_dir != DIR_UP) {
+        if(as->state == RUNNING && ctx && ctx->next_dir != DIR_UP) {
             ctx->next_dir = DIR_DOWN;
         }
         break;
@@ -504,40 +577,48 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
 }
 
 /* This function runs once at startup. */
-SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
-{    AppState *as = (AppState *)SDL_calloc(1, sizeof(AppState));
+SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {    
+    
+    // AppState stores various game specific information
+    AppState *as = (AppState *)SDL_calloc(1, sizeof(AppState));
     if (!as) {
         return SDL_APP_FAILURE;
     }
     *appstate = as;
 
-    /* Create the window */
+    /* Create the window and renderer */
     if (!SDL_CreateWindowAndRenderer("TRON", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, 0, &as->window, &as->renderer)) {
         return SDL_APP_FAILURE;
     }
 
+    /* Metadata */
     if (!SDL_SetAppMetadata("TRON", "1.0", "TRONv1.0")) {
         return SDL_APP_FAILURE;
     }
 
+    /* SDL */
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
+    /* SDL_ttf */
     if (!TTF_Init()) {
         SDL_Log("Couldn't initialise SDL_ttf: %s\n", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
-    tron_initialize(as);     
+    /* Initialize some required AppState variables. The rest gets covered on game start */
+    as->state      = START;
+    as->pause_time = SDL_GetTicks();
+    as->last_step  = SDL_GetTicks();
+    as->game_mode  = PVP;
 
     return SDL_APP_CONTINUE;
 }
 
 /* This function runs when a new event (mouse input, keypresses, etc) occurs. */
-SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
-{
+SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
     AppState *as = (AppState *)appstate;
     switch (event->type) {
     case SDL_EVENT_QUIT:
@@ -551,8 +632,7 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event)
 }
 
 /* This function runs once per frame, and is the heart of the program. */
-SDL_AppResult SDL_AppIterate(void *appstate)
-{
+SDL_AppResult SDL_AppIterate(void *appstate) {
     AppState *as = (AppState *)appstate;
     StartMenu start_menu;
     Menu start_sub_menu;
@@ -565,7 +645,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
 
     // Update characters positions internally if game is not paused
     while (as->state == RUNNING && ((now - as->last_step) >= STEP_RATE_IN_MILLISECONDS)) {
-        move_characters(as);
+        move_characters(as); // TODO - move the above if statement to move_players()?
         as->last_step += STEP_RATE_IN_MILLISECONDS;
     }
 
@@ -576,6 +656,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         draw_game_board(as->renderer, as->matrix);
         break;
     case PAUSED: 
+        //pause_game()
         pause_menu.title = "PAUSED";
         pause_menu.msg = "";
         pause_menu.msg2 = "Press P to continue";
@@ -590,6 +671,7 @@ SDL_AppResult SDL_AppIterate(void *appstate)
         draw_menu(as->renderer, pause_menu);
         break;
     case GAME_OVER:
+        //game_over()
         game_over_menu.title = "GAME OVER";
         sprintf(winner_text_buffer, "P%d WINS", as->winner);
         game_over_menu.msg  = winner_text_buffer;
