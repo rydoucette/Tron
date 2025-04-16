@@ -1,1 +1,1 @@
-/usr/bin/cc CMakeFiles/tron.dir/tron.c.o -o tron  -Wl,-rpath,/home/ryand/projects/tron/build libSDL3_ttf.so.0.3.0 libSDL3.so.0.3.0 
+/usr/bin/cc  -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/tron.dir/tron.c.o -o tron  -Wl,-rpath,/Users/ryandoucette/Projects/Tron/build libSDL3_ttf.0.3.0.dylib libSDL3.0.dylib

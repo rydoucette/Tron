@@ -8,7 +8,7 @@ set(CMAKE_DEPENDS_LANGUAGES
 
 # The set of dependency files which are needed:
 set(CMAKE_DEPENDS_DEPENDENCY_FILES
-  "/home/ryand/projects/tron/vendored/SDL_ttf/external/plutosvg/source/plutosvg.c" "vendored/SDL_ttf/external/plutosvg-guild/CMakeFiles/plutosvg.dir/source/plutosvg.c.o" "gcc" "vendored/SDL_ttf/external/plutosvg-guild/CMakeFiles/plutosvg.dir/source/plutosvg.c.o.d"
+  "/Users/ryandoucette/Projects/Tron/vendored/SDL_ttf/external/plutosvg/source/plutosvg.c" "vendored/SDL_ttf/external/plutosvg-guild/CMakeFiles/plutosvg.dir/source/plutosvg.c.o" "gcc" "vendored/SDL_ttf/external/plutosvg-guild/CMakeFiles/plutosvg.dir/source/plutosvg.c.o.d"
   )
 
 # Targets to which this target links which contain Fortran sources.

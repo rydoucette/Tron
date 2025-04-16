@@ -1,8 +1,8 @@
 file(REMOVE_RECURSE
+  "../../libSDL3_ttf.0.3.0.dylib"
+  "../../libSDL3_ttf.0.dylib"
+  "../../libSDL3_ttf.dylib"
   "../../libSDL3_ttf.pdb"
-  "../../libSDL3_ttf.so"
-  "../../libSDL3_ttf.so.0"
-  "../../libSDL3_ttf.so.0.3.0"
   ".0"
   "CMakeFiles/SDL3_ttf-shared.dir/src/SDL_gpu_textengine.c.o"
   "CMakeFiles/SDL3_ttf-shared.dir/src/SDL_gpu_textengine.c.o.d"
