@@ -178,8 +178,8 @@ vendored/SDL_ttf/external/plutovg-build/clean: vendored/SDL_ttf/external/plutovg
 # Target rules for target CMakeFiles/tron.dir
 
 # All Build rule for target.
-CMakeFiles/tron.dir/all: vendored/SDL/CMakeFiles/SDL3-shared.dir/all
 CMakeFiles/tron.dir/all: vendored/SDL_ttf/CMakeFiles/SDL3_ttf-shared.dir/all
+CMakeFiles/tron.dir/all: vendored/SDL/CMakeFiles/SDL3-shared.dir/all
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tron.dir/build.make CMakeFiles/tron.dir/depend
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/tron.dir/build.make CMakeFiles/tron.dir/build
 	@$(CMAKE_COMMAND) -E cmake_echo_color "--switch=$(COLOR)" --progress-dir=/home/ryand/projects/tron/build/CMakeFiles --progress-num=100 "Built target tron"

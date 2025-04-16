@@ -17,22 +17,16 @@
 
 #define GAME_WIDTH  120U
 #define GAME_HEIGHT 90U
-#define MATRIX_SIZE (GAME_WIDTH * GAME_HEIGHT)
 #define BLOCK_SIZE_IN_PIXELS 8
-#define BACKGROUND_SCALE 4
-#define STEP_RATE_IN_MILLISECONDS 45
 #define SDL_WINDOW_WIDTH           (BLOCK_SIZE_IN_PIXELS * GAME_WIDTH)
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
+#define BACKGROUND_SCALE 4
+#define STEP_RATE_IN_MILLISECONDS 45
 #define PLAYER_COUNT 2
 
 // SDL static variables
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
-static SDL_Texture *texture = NULL;
-static TTF_Font *font = NULL;
-
-extern unsigned char tiny_ttf[];
-extern unsigned int tiny_ttf_len;
 
 // Cell on the game board - shows if any player occupies that square
 typedef enum
@@ -53,7 +47,7 @@ typedef enum
     GAME_OVER = 3U
 } State;
 
-// represents where the players car is currently located, and where it's heading
+// represents where the players car head is currently located, and its next direction
 typedef struct
 {
     int head_xpos;
@@ -61,32 +55,6 @@ typedef struct
     char next_dir;
     int player_id;
 } CharacterContext;
-
-SDL_Scancode player_keys[PLAYER_COUNT][4] = {
-    {SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN},  // Player 1
-    {SDL_SCANCODE_D, SDL_SCANCODE_A, SDL_SCANCODE_W, SDL_SCANCODE_S},  // Player 2
-};
-
-int player_positions[PLAYER_COUNT][2] = {
-    {GAME_WIDTH / 4, GAME_HEIGHT / 2},   // Player 1
-    {3 * GAME_WIDTH / 4, GAME_HEIGHT / 2}, // Player 2
-   //{GAME_WIDTH / 4, GAME_HEIGHT / 2},
-};
-
-// contains game specific data
-typedef struct
-{
-    SDL_Window *window;
-    SDL_Renderer *renderer;
-    //SDL_Texture *texture;
-    CharacterContext character_ctx[PLAYER_COUNT];
-    int num_players;
-    //int is_paused;
-    State state;
-    Uint64 pause_time;
-    Cell matrix[GAME_WIDTH][GAME_HEIGHT];
-    Uint64 last_step;
-} AppState;
 
 // possible direction
 typedef enum
@@ -97,21 +65,62 @@ typedef enum
     DIR_DOWN
 } CharacterDirection;
 
+// Key mapping for which keys belong to which players
+SDL_Scancode player_keys[PLAYER_COUNT][4] = {
+    {SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN},  // Player 1
+    {SDL_SCANCODE_D, SDL_SCANCODE_A, SDL_SCANCODE_W, SDL_SCANCODE_S}              // Player 2
+};
+
+// Starting off positions for the players
+int player_positions[PLAYER_COUNT][2] = {
+    {GAME_WIDTH / 4, GAME_HEIGHT / 2},    // Player 1
+    {3 * GAME_WIDTH / 4, GAME_HEIGHT / 2} // Player 2
+};
+
+// contains game specific data
 typedef struct
 {
-    int r;
-    int g;
-    int b;
-    int a;
-} Color;
+    SDL_Window *window;
+    SDL_Renderer *renderer;
+    CharacterContext character_ctx[PLAYER_COUNT];
+    int num_players;
+    State state;
+    Uint64 pause_time;
+    Cell matrix[GAME_WIDTH][GAME_HEIGHT];
+    Uint64 last_step;
+} AppState;
+
+typedef struct
+{
+    const char* title;
+    const char* msg;
+    int x;
+    int y;
+    int w;
+    int h;
+    SDL_Color bg_color;
+    SDL_Color outline_color;
+    SDL_Color title_font_color;
+    SDL_Color msg_font_color;
+} Menu;
+
+typedef struct
+{
+    Menu menu;
+    //todo add the things that make a start menu special
+} StartMenu;
 
 // Colors
-static const Color COLOR_BG         = {8, 12, 20, SDL_ALPHA_OPAQUE};   // Deep faded blue
-static const Color COLOR_BG_OUTLINE = {18, 24, 35, SDL_ALPHA_OPAQUE};  // Subtle grid outline
-static const Color COLOR_P1 = {0, 255, 255, SDL_ALPHA_OPAQUE};   // Cyan (classic Tron)
-static const Color COLOR_P2 = {255, 0, 255, SDL_ALPHA_OPAQUE};   // Magenta (cyberpunky)
-static const Color COLOR_P3 = {255, 165, 0, SDL_ALPHA_OPAQUE};   // Orange (warm neon)
-static const Color COLOR_P4 = {0, 255, 128, SDL_ALPHA_OPAQUE};   // Mint green (futuristic)
+static const SDL_Color COLOR_BG           = {8, 12, 20, SDL_ALPHA_OPAQUE};     // Deep faded blue
+static const SDL_Color COLOR_BG_OUTLINE   = {18, 24, 35, SDL_ALPHA_OPAQUE};    // Subtle grid outline
+static const SDL_Color MENU_COLOR         = {15,15,35,SDL_ALPHA_OPAQUE};
+static const SDL_Color MENU_OUTLINE_COLOR = {0,255,255,SDL_ALPHA_OPAQUE};
+static const SDL_Color MENU_TITLE_COLOR   = {255, 255, 255, SDL_ALPHA_OPAQUE};
+static const SDL_Color MENU_MESSAGE_COLOR = {255, 255, 255, SDL_ALPHA_OPAQUE};
+static const SDL_Color COLOR_P1           = {0, 255, 255, SDL_ALPHA_OPAQUE};    // Cyan (classic Tron)
+static const SDL_Color COLOR_P2           = {255, 0, 255, SDL_ALPHA_OPAQUE};    // Magenta (cyberpunky)
+static const SDL_Color COLOR_P3           = {255, 165, 0, SDL_ALPHA_OPAQUE};    // Orange (warm neon)
+static const SDL_Color COLOR_P4           = {0, 255, 128, SDL_ALPHA_OPAQUE};    // Mint green (futuristic)
 
 static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short scaler)
 {
@@ -121,7 +130,7 @@ static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short 
     r->h = BLOCK_SIZE_IN_PIXELS * scaler;
 }
 
-static const Color get_color_for_cell(Cell cell) {
+static const SDL_Color get_color_for_cell(Cell cell) {
     switch (cell) {
         case CELL_P1: return COLOR_P1;
         case CELL_P2: return COLOR_P2;
@@ -131,10 +140,58 @@ static const Color get_color_for_cell(Cell cell) {
     }
 }
 
-void set_sdl_color(SDL_Renderer *renderer, const Color *color) {
+void set_sdl_color(SDL_Renderer *renderer, const SDL_Color *color) {
     SDL_SetRenderDrawColor(renderer, color->r, color->g, color->b, color->a);
 }
 
+
+static void draw_menu(SDL_Renderer *renderer, Menu menu) {
+    SDL_Texture *texture = NULL;
+    SDL_Surface *surface = NULL;
+    TTF_Font    *font    = NULL;
+    SDL_FRect menu_rect = {menu.x, menu.y, menu.w, menu.h };
+    SDL_FRect title_text_rect;
+    SDL_FRect msg_text_rect;
+
+    // Menu Background
+    set_sdl_color(renderer, &menu.bg_color); 
+    SDL_RenderFillRect(renderer, &menu_rect);
+
+    // Menu Outline
+    set_sdl_color(renderer, &menu.outline_color);
+    SDL_RenderRect(renderer, &menu_rect);
+
+    // Title Text
+    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 36.0f);
+    surface = TTF_RenderText_Blended(font, menu.title, 0, menu.title_font_color);
+    texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    SDL_GetTextureSize(texture, &title_text_rect.w, &title_text_rect.h);
+    //SDL_SetRenderScale(as->renderer, scale, scale); // FYI - may want to conside looking into scale
+    title_text_rect.x = (SDL_WINDOW_WIDTH - title_text_rect.w) / 2;
+    title_text_rect.y = (SDL_WINDOW_HEIGHT - title_text_rect.h) / 3;
+    set_sdl_color(renderer, &menu.title_font_color);
+    SDL_RenderTexture(renderer, texture, NULL, &title_text_rect);
+    SDL_DestroyTexture(texture);
+    TTF_CloseFont(font);
+
+    // Message Text
+    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 18.0f);
+    surface = TTF_RenderText_Blended(font, menu.msg, 0, menu.msg_font_color);
+    texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_DestroySurface(surface);
+    SDL_GetTextureSize(texture, &msg_text_rect.w, &msg_text_rect.h);
+    //SDL_SetRenderScale(as->renderer, scale, scale); // FYI - may want to conside looking into scale
+    msg_text_rect.x = (SDL_WINDOW_WIDTH - msg_text_rect.w) / 2;
+    msg_text_rect.y = 2 * (SDL_WINDOW_HEIGHT - msg_text_rect.h) / 3;
+    set_sdl_color(renderer, &menu.msg_font_color);
+    SDL_RenderTexture(renderer, texture, NULL, &msg_text_rect);
+    SDL_DestroyTexture(texture);
+    TTF_CloseFont(font);
+
+} 
+
+/*
 static void draw_pause_menu(SDL_Renderer *renderer){
     const char* menu_text = "GAME OVER";
     SDL_FRect r = {SDL_WINDOW_WIDTH/3,SDL_WINDOW_HEIGHT/4,SDL_WINDOW_WIDTH / 3, SDL_WINDOW_HEIGHT/2 };
@@ -153,10 +210,10 @@ static void draw_pause_menu(SDL_Renderer *renderer){
     SDL_RenderRect(renderer, &r);
 
     
-    /* Create the text */
+    // Create the text 
     SDL_Color color = { 255, 0, 51, SDL_ALPHA_OPAQUE };
     SDL_Surface *text;
-    text = TTF_RenderText_Blended(font, "GAME OVER", 0, color);
+    text = TTF_RenderText_Blended(font, menu, 0, color);
     if (text) {
         texture = SDL_CreateTextureFromSurface(renderer, text);
         SDL_DestroySurface(text);
@@ -170,19 +227,19 @@ static void draw_pause_menu(SDL_Renderer *renderer){
     SDL_FRect dst;
     const float scale = 1.0f;
 
-    /* Center the text and scale it up */
+    // Center the text and scale it up 
     SDL_GetRenderOutputSize(renderer, &w, &h);
-    //SDL_SetRenderScale(as->renderer, scale, scale);
+    SDL_SetRenderScale(as->renderer, scale, scale);
     SDL_GetTextureSize(texture, &dst.w, &dst.h);
     dst.x = ((w / scale) - dst.w) / 2;
     dst.y = ((h / scale) - dst.h) / 3;
 
-    /* Draw the text */
+    // Draw the text 
     SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
     SDL_RenderTexture(renderer, texture, NULL, &dst);
-}
+} */
 
-static void draw_background(SDL_Renderer *renderer, const Color *bg_color, const Color *bg_outline_color) {
+static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, const SDL_Color *bg_outline_color) {
     SDL_FRect r;
     set_sdl_color(renderer, bg_color);
     SDL_RenderClear(renderer);
@@ -203,7 +260,7 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
         for (int j = 0; j < GAME_HEIGHT; j++) {
             cell = matrix[i][j];
             if(cell != CELL_NOTHING) {
-                Color cell_color = get_color_for_cell(cell);
+                SDL_Color cell_color = get_color_for_cell(cell);
                 set_sdl_color(renderer, &cell_color);
                 set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS, 1);
                 SDL_RenderFillRect(renderer, &r);
@@ -213,6 +270,17 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
 }
 
 void move_player(CharacterContext *ctx, AppState *as) {
+
+    /* This should never happen since after we adjust head position we check for 
+    a collision. Adding this here for defensive programming to prevent seg faults
+    if there are any bugs in the code causing the player to move outside the bounds
+    of the game board 
+    */
+    if (ctx->head_xpos < 0 || ctx->head_xpos >= GAME_WIDTH ||
+        ctx->head_ypos < 0 || ctx->head_ypos >= GAME_HEIGHT) {
+        SDL_Log("WARNING - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
+    }
+
     // Move head forward
     switch (ctx->next_dir) {
         case DIR_RIGHT:
@@ -234,13 +302,13 @@ void move_player(CharacterContext *ctx, AppState *as) {
     int x = ctx->head_xpos;
     int y = ctx->head_ypos;
     
-    // crash with wall
+    // Player crashed with the wall
     if(x >= GAME_WIDTH || x < 0 || y >= GAME_HEIGHT || y < 0) {
         as->state = GAME_OVER;
         as->pause_time = SDL_GetTicks();
     }
     
-    // crash with trail
+    // Player crashed with another player
     if(as->matrix[x][y] != CELL_NOTHING) {
         as->state = GAME_OVER;
         as->pause_time = SDL_GetTicks();
@@ -336,25 +404,25 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code)
     /* Decide new direction of the character. */
     case SDL_SCANCODE_RIGHT:
     case SDL_SCANCODE_D:
-        if(ctx->next_dir != DIR_LEFT) {
+        if(ctx && ctx->next_dir != DIR_LEFT) {
             ctx->next_dir = DIR_RIGHT;
         }
         break;
     case SDL_SCANCODE_UP:
     case SDL_SCANCODE_W:
-        if(ctx->next_dir != DIR_DOWN) {
+        if(ctx && ctx->next_dir != DIR_DOWN) {
             ctx->next_dir = DIR_UP;
         }
         break;
     case SDL_SCANCODE_LEFT:
     case SDL_SCANCODE_A:
-        if(ctx->next_dir != DIR_RIGHT) {
+        if(ctx && ctx->next_dir != DIR_RIGHT) {
             ctx->next_dir = DIR_LEFT;
         }
         break;
     case SDL_SCANCODE_DOWN:
     case SDL_SCANCODE_S:
-        if(ctx->next_dir != DIR_UP) {
+        if(ctx && ctx->next_dir != DIR_UP) {
             ctx->next_dir = DIR_DOWN;
         }
         break;
@@ -395,15 +463,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[])
         return SDL_APP_FAILURE;
     }
 
-    /* Open the font */
-    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 36.0f);
-    if (!font) {
-        SDL_Log("Couldn't open font: %s\n", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
 
-    tron_initialize(as); 
-    
+    tron_initialize(as);     
     as->last_step = SDL_GetTicks();
 
     return SDL_APP_CONTINUE;
@@ -440,17 +501,40 @@ SDL_AppResult SDL_AppIterate(void *appstate)
     }
 
     draw_background(as->renderer, &COLOR_BG, &COLOR_BG_OUTLINE);
-    draw_game_board(as->renderer, as->matrix);
 
-    switch (as->state)
-    {
+    switch (as->state) {
     case RUNNING:
+        draw_game_board(as->renderer, as->matrix);
         break;
     case PAUSED:
-        draw_pause_menu(as->renderer);
+        Menu pause_menu = {
+            "PAUSED",
+            "Press P to continue",
+            SDL_WINDOW_WIDTH / 3,
+            SDL_WINDOW_HEIGHT / 4,
+            SDL_WINDOW_WIDTH / 3,
+            SDL_WINDOW_HEIGHT / 2,
+            MENU_COLOR,
+            MENU_OUTLINE_COLOR,
+            MENU_TITLE_COLOR,
+            MENU_MESSAGE_COLOR,
+        };
+        draw_menu(as->renderer, pause_menu);
         break;
     case GAME_OVER:
-        //draw_game_over_menu(as->renderer)
+        Menu game_over_menu = {
+            "GAME OVER",
+            "Press SPACE to restart",
+            SDL_WINDOW_WIDTH / 3,
+            SDL_WINDOW_HEIGHT / 4,
+            SDL_WINDOW_WIDTH / 3,
+            SDL_WINDOW_HEIGHT / 2,
+            MENU_COLOR,
+            MENU_OUTLINE_COLOR,
+            MENU_TITLE_COLOR,
+            MENU_MESSAGE_COLOR
+        };
+        draw_menu(as->renderer, game_over_menu);
         break;
     case START:
         break;

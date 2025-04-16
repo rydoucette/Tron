@@ -7,14 +7,14 @@ set(CMAKE_DEPENDS_GENERATOR "Unix Makefiles")
 # The top level Makefile was generated from the following files:
 set(CMAKE_MAKEFILE_DEPENDS
   "CMakeCache.txt"
+  "/home/ryand/projects/tron/.git/HEAD"
+  "/home/ryand/projects/tron/.git/refs/heads/main"
   "/home/ryand/projects/tron/CMakeLists.txt"
   "CMakeFiles/3.28.3/CMakeCCompiler.cmake"
   "CMakeFiles/3.28.3/CMakeCXXCompiler.cmake"
   "CMakeFiles/3.28.3/CMakeSystem.cmake"
   "vendored/SDL/CMakeFiles/SDL_build_config.h.intermediate"
   "vendored/SDL/CMakeFiles/git-data/grabRef.cmake"
-  "/home/ryand/projects/tron/vendored/SDL/.git/HEAD"
-  "/home/ryand/projects/tron/vendored/SDL/.git/refs/heads/main"
   "/home/ryand/projects/tron/vendored/SDL/CMakeLists.txt"
   "/home/ryand/projects/tron/vendored/SDL/cmake/3rdparty.cmake"
   "/home/ryand/projects/tron/vendored/SDL/cmake/FindLibUSB.cmake"
