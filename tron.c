@@ -29,6 +29,7 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <stdbool.h>
 
 #define GAME_WIDTH  120U
 #define GAME_HEIGHT 90U
@@ -309,86 +310,150 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
     }
 }
 
-void move_computer(CharacterContext *ctx, AppState *as) {
-    if (ctx->head_xpos < 0 || ctx->head_xpos >= GAME_WIDTH ||
-        ctx->head_ypos < 0 || ctx->head_ypos >= GAME_HEIGHT) {
-        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
-    }   
+// checks if player collided with another player
+bool collides_with_player(Cell matrix[GAME_WIDTH][GAME_HEIGHT], int x, int y) {
+    if(matrix[x][y] != CELL_NOTHING)
+        return true;
+    return false;
+}
 
-    char curr_dir = ctx->next_dir;
+// Check if player collided with a wall
+bool collides_with_wall(Cell matrix[GAME_WIDTH][GAME_HEIGHT], int x, int y) {
+    if(x < 0 || x >= GAME_WIDTH || y < 0 || y >= GAME_HEIGHT)
+        return true;
+    return false;
+}
 
-    /*
-    DIR_RIGHT = 0
-    DIR_UP    = 1
-    DIR_LEFT  = 2
-    DIR_DOWN  = 3
-    */
+// Checks if player collided with a wall or another player's tail
+bool is_collision(Cell matrix[GAME_WIDTH][GAME_HEIGHT], int x, int y) {
+    if(collides_with_wall(matrix,x,y))
+        return true;
+    if(collides_with_player(matrix,x,y))
+        return true;
+    return false;
+}
+
+// Returns the number of empty cells in a single direction from a particular location
+int get_path_length(Cell matrix[GAME_WIDTH][GAME_HEIGHT], int x, int y, CharacterDirection direction) {
+   int path_length = 0;
+   int x_increment = 0;
+   int y_increment = 0;
+   switch (direction) {
+    case DIR_RIGHT:
+        x_increment = 1;
+        break;
+    case DIR_UP:
+        y_increment = -1;
+        break;
+    case DIR_LEFT:
+        x_increment =  -1;
+        break;
+    case DIR_DOWN:
+        y_increment = 1;
+        break;
+    default:
+        SDL_Log("ERROR - Invalid direction");
+        break;
+    }
+
+    x += x_increment;
+    y += y_increment;
+    bool collision = is_collision(matrix,x,y);
+    while(!collision) {
+        path_length++;
+        x += x_increment;
+        y += y_increment;
+        collision = is_collision(matrix,x,y);
+    }
+    return path_length;
+}
+
+// Picks a direction for the computer - currently checks with the direction with the most uninterupted cells
+CharacterDirection pick_next_dir(Cell matrix[GAME_WIDTH][GAME_HEIGHT], int head_xpos, int head_ypos, CharacterDirection curr_dir) {
+    char next_dir = curr_dir;
+    int longest_path = 0;
 
     for(int i = 0; i < 4; i++) {
         //Can't go backwards
-        if(curr_dir == 0 && curr_dir == 2 ||
-           curr_dir == 1 && curr_dir == 3 ||
-           curr_dir == 2 && curr_dir == 0 ||
-           curr_dir == 3 && curr_dir == 1) {
+        if((curr_dir == DIR_LEFT  && i == DIR_RIGHT) ||
+           (curr_dir == DIR_RIGHT && i == DIR_LEFT)  ||
+           (curr_dir == DIR_UP    && i == DIR_DOWN)  ||
+           (curr_dir == DIR_DOWN  && i == DIR_UP)) {
             continue;
         }
-    }
 
+        int current_run = get_path_length(matrix, head_xpos, head_ypos, (CharacterDirection)i);
+        if(current_run > longest_path) {
+            longest_path = current_run;
+            next_dir = (CharacterDirection)i;
+        }
+    }
+    return next_dir;
 }
 
-void move_player(CharacterContext *ctx, AppState *as) {
-    if (ctx->head_xpos < 0 || ctx->head_xpos >= GAME_WIDTH ||
-        ctx->head_ypos < 0 || ctx->head_ypos >= GAME_HEIGHT) {
-        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
-    }
-
-    //printf("Player %d: (%d, %d) - Direction: %d\n", ctx->player_id, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
-
+// Moves player forward one unit in a particular direction
+void move_head(CharacterContext *ctx) {
     // Move head forward
     switch (ctx->next_dir) {
         case DIR_RIGHT:
-            ++ctx->head_xpos;
+            ctx->head_xpos++;
             break;
         case DIR_UP:
-            --ctx->head_ypos;
+            ctx->head_ypos--;
             break;
         case DIR_LEFT:
-            --ctx->head_xpos;
+            ctx->head_xpos--;
             break;
         case DIR_DOWN:
-            ++ctx->head_ypos;
+            ctx->head_ypos++;
             break;
         default:
             break;
     }
-        
-    int x = ctx->head_xpos;
-    int y = ctx->head_ypos;
-    
-    // Player crashed with the wall
-    if(x >= GAME_WIDTH || x < 0 || y >= GAME_HEIGHT || y < 0) {
-        as->state = GAME_OVER;
-        if(ctx->player_id == 1) {
-            as->winner = 2;
-        } else {
-            as->winner = 1;
-        }
-        as->pause_time = SDL_GetTicks();
-    }
-    
-    // Player crashed with another player
-    if(as->matrix[x][y] != CELL_NOTHING) {
-        as->state = GAME_OVER;
-        as->pause_time = SDL_GetTicks();
-        if(ctx->player_id == 1) {
-            as->winner = 2;
-        } else {
-            as->winner = 1;
-        }
+}
+
+// Determines which direction computer should take, updates position and checks for collision
+void move_computer(CharacterContext *ctx, void *appstate) {
+    AppState *as = (AppState *)appstate;
+
+    if (is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
+        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
     }
 
-    if(as->state == RUNNING)
+    ctx->next_dir = pick_next_dir(as->matrix, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
+    move_head(ctx);
+
+    if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
+        as->state = GAME_OVER;
+        as->winner = 1;
+        as->pause_time = SDL_GetTicks();
+    } else {
         as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
+    }
+}
+
+// Checks what direction player has inputed, updates position and checks for collision
+void move_player(CharacterContext *ctx, void *appstate) {
+    AppState *as = (AppState *)appstate;
+
+    if (is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
+        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
+    }
+
+    move_head(ctx);
+
+    if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
+        as->state = GAME_OVER;
+        as->winner = 1;
+        as->pause_time = SDL_GetTicks();
+    } else {
+        as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
+    }
+    
+
+    if(as->state == RUNNING) {
+        as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
+    }
 
 }
 
@@ -401,7 +466,7 @@ void move_characters(void *appstate)
     for(int i = 0; i < total_players; i++) {
         ctx = &as->character_ctx[i];
         if(ctx->is_computer) {
-            //move_computer(ctx, as);
+            move_computer(ctx, as);
         } else {
             move_player(ctx, as);
         }
@@ -455,9 +520,9 @@ void initialize_characters(void *appstate) {
         
         // Set player IDs
         if(as->character_ctx[i].is_computer) {
-            as->character_ctx[i].player_id = computers_added;
+            as->character_ctx[i].player_id = computers_added + humans_added;
         } else {
-            as->character_ctx[i].player_id = humans_added;
+            as->character_ctx[i].player_id = computers_added + humans_added;
         }
         
         // Set starting direction
@@ -486,9 +551,7 @@ void start_game(void *appstate) {
 
     initialize_game_board(as->matrix);
     as->state = RUNNING;
-    Uint64 now = SDL_GetTicks();
-    Uint64 paused_duration = now - as->pause_time;
-    as->last_step += paused_duration;
+    as->last_step  = SDL_GetTicks();
 
     // Set the number of players and computers
     if(as->game_mode == PVP) {
@@ -657,6 +720,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         break;
     case PAUSED: 
         //pause_game()
+        draw_game_board(as->renderer, as->matrix);
         pause_menu.title = "PAUSED";
         pause_menu.msg = "";
         pause_menu.msg2 = "Press P to continue";
@@ -668,7 +732,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         pause_menu.outline_color = MENU_OUTLINE_COLOR;
         pause_menu.title_font_color = MENU_TITLE_COLOR;
         pause_menu.msg_font_color = MENU_MESSAGE_COLOR;
-        draw_menu(as->renderer, pause_menu);
+        //draw_menu(as->renderer, pause_menu);
         break;
     case GAME_OVER:
         //game_over()
