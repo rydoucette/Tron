@@ -11,6 +11,8 @@
 
   TODO
     ~ Bugs ~
+    * out of bounds
+    * player id wins
     ~ Features ~
     * Add AI for computer players
     * Add support for more players/computers
@@ -38,7 +40,7 @@
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
 #define BACKGROUND_SCALE 4
 #define STEP_RATE_IN_MILLISECONDS 45
-#define PLAYER_COUNT 2
+#define PLAYER_COUNT 4 // Todo - make this customizable
 
 // SDL static variables
 static SDL_Window *window = NULL;
@@ -77,7 +79,9 @@ typedef struct
     int head_ypos;
     char next_dir;
     int player_id;
-    bool is_computer;
+    char player_name[20];
+    bool is_human;
+    bool is_alive;
 } CharacterContext;
 
 // possible direction
@@ -89,16 +93,18 @@ typedef enum
     DIR_DOWN
 } CharacterDirection;
 
-// Key mapping for which keys belong to which players
-SDL_Scancode player_keys[PLAYER_COUNT][4] = {
+// Key mapping for which keys belong to which human players (limitation: max 2 humans)
+SDL_Scancode player_keys[2][4] = {
     {SDL_SCANCODE_RIGHT, SDL_SCANCODE_LEFT, SDL_SCANCODE_UP, SDL_SCANCODE_DOWN},  // Player 1
     {SDL_SCANCODE_D, SDL_SCANCODE_A, SDL_SCANCODE_W, SDL_SCANCODE_S}              // Player 2
 };
 
-// Starting off positions for the players
-int starting_positions[PLAYER_COUNT][2] = {
-    {GAME_WIDTH / 4, GAME_HEIGHT / 2},    // Player 1
-    {3 * GAME_WIDTH / 4, GAME_HEIGHT / 2} // Player 2
+// Starting off positions for the players (limitation: max 4 players in game)
+int starting_positions[4][2] = {
+    {GAME_WIDTH / 4, GAME_HEIGHT / 2},     // Player 1
+    {3 * GAME_WIDTH / 4, GAME_HEIGHT / 2}, // Player 2
+    {GAME_WIDTH / 4, GAME_HEIGHT / 4},     // Player 3
+    {3 * GAME_WIDTH / 4, GAME_HEIGHT / 4}, // Player 4
 };
 
 // contains game specific data
@@ -106,13 +112,14 @@ typedef struct
 {
     SDL_Window *window;
     SDL_Renderer *renderer;
-    CharacterContext character_ctx[PLAYER_COUNT];
+    CharacterContext character_ctx[PLAYER_COUNT]; // Todo - make this customizable
     Cell matrix[GAME_WIDTH][GAME_HEIGHT];
     State state;
     GameMode game_mode;
-    int num_human_players;
-    int num_computer_players;
-    int winner;
+    int total_human_players;
+    int total_computer_players;
+    int remaining_players;
+    char winner[20];
     Uint64 pause_time;
     Uint64 last_step;
 } AppState;
@@ -151,6 +158,7 @@ static const SDL_Color COLOR_P2                   = {255, 0, 255, SDL_ALPHA_OPAQ
 static const SDL_Color COLOR_P3                   = {255, 165, 0, SDL_ALPHA_OPAQUE};    // Orange (warm neon)
 static const SDL_Color COLOR_P4                   = {0, 255, 128, SDL_ALPHA_OPAQUE};    // Mint green (futuristic)
 
+// helper function to create rectangle objects
 static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short scaler)
 {
     r->x = (float)(x * BLOCK_SIZE_IN_PIXELS);
@@ -159,6 +167,7 @@ static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short 
     r->h = BLOCK_SIZE_IN_PIXELS * scaler;
 }
 
+// cell in a matrix will be mapped to a player. This maps each player to a sepcific color
 static const SDL_Color get_color_for_cell(Cell cell) {
     switch (cell) {
         case CELL_P1: return COLOR_P1;
@@ -169,10 +178,12 @@ static const SDL_Color get_color_for_cell(Cell cell) {
     }
 }
 
+// Helper function to set the rendering color instead of manually type RGB values everytime
 void set_sdl_color(SDL_Renderer *renderer, const SDL_Color *color) {
     SDL_SetRenderDrawColor(renderer, color->r, color->g, color->b, color->a);
 }
 
+// Draw a menu with generic attributes such as a title, a message, background and outline
 static void draw_menu(SDL_Renderer *renderer, Menu menu) {
     SDL_Texture *texture = NULL;
     SDL_Surface *surface = NULL;
@@ -232,6 +243,7 @@ static void draw_menu(SDL_Renderer *renderer, Menu menu) {
     TTF_CloseFont(font);
 }
 
+// Draw the start menu before the core came cycle kicks off
 static void draw_start_menu(SDL_Renderer *renderer, GameMode game_mode, StartMenu start_menu) {
     SDL_Texture *texture = NULL;
     SDL_Surface *surface = NULL;
@@ -277,9 +289,23 @@ static void draw_start_menu(SDL_Renderer *renderer, GameMode game_mode, StartMen
     SDL_RenderTexture(renderer, texture, NULL, &msg_text_rect);
     SDL_DestroyTexture(texture);
     TTF_CloseFont(font);
-
 }
 
+// sets winner as the player name of the last one standing
+void set_winner(void *appstate) {
+    AppState *as = (AppState *)appstate;
+    CharacterContext ctx;
+    int total_players = as->total_human_players + as->total_computer_players;
+    for(int i = 0; i < total_players; i++) {
+        ctx = as->character_ctx[i];
+        if(ctx.is_alive) {
+            printf("player_name of last alive: as->character_ctx[i].player_name\n");
+            strcpy(as->winner,as->character_ctx[i].player_name);
+        }
+    }
+    printf("set_winner=>%s\n", as->winner);
+}
+// Draw background, first thing that will get drawn on every game cycle
 static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, const SDL_Color *bg_outline_color) {
     SDL_FRect r;
     set_sdl_color(renderer, bg_color);
@@ -293,6 +319,7 @@ static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, c
     } 
 }
 
+// Draw each character and their tails on the game board
 static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME_HEIGHT]) {
     //int cell;
     int cell;
@@ -412,67 +439,38 @@ void move_head(CharacterContext *ctx) {
     }
 }
 
-// Determines which direction computer should take, updates position and checks for collision
-void move_computer(CharacterContext *ctx, void *appstate) {
-    AppState *as = (AppState *)appstate;
-
-    if (is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
-        SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
-    }
-
-    ctx->next_dir = pick_next_dir(as->matrix, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
-    move_head(ctx);
-
-    if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
-        as->state = GAME_OVER;
-        as->winner = 1;
-        as->pause_time = SDL_GetTicks();
-    } else {
-        as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
-    }
-}
-
 // Checks what direction player has inputed, updates position and checks for collision
 void move_player(CharacterContext *ctx, void *appstate) {
     AppState *as = (AppState *)appstate;
-
-    if (is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
+    if (collides_with_wall(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
         SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
     }
-
+    // if player is a computer, determine which direction go
+    if(!ctx->is_human)
+        ctx->next_dir = pick_next_dir(as->matrix, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
     move_head(ctx);
-
     if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
-        as->state = GAME_OVER;
-        as->winner = 1;
-        as->pause_time = SDL_GetTicks();
+        ctx->is_alive = false;
+        as->remaining_players--;
     } else {
         as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
     }
-    
-
-    if(as->state == RUNNING) {
-        as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
-    }
-
 }
 
-void move_characters(void *appstate)
-{
+// Update the positions of all players in the game if they are still alive
+void move_characters(void *appstate) {
     AppState *as = (AppState *)appstate;
     CharacterContext *ctx;
-    int total_players = as->num_human_players + as->num_computer_players;
+    int total_players = as->total_human_players + as->total_computer_players;
 
     for(int i = 0; i < total_players; i++) {
         ctx = &as->character_ctx[i];
-        if(ctx->is_computer) {
-            move_computer(ctx, as);
-        } else {
+        if(ctx->is_alive)
             move_player(ctx, as);
-        }
     }
 }
 
+// Pause and unpause the game depending on current state
 void toggle_pause(void *appstate) {
     AppState *as = (AppState *)appstate;
 
@@ -491,6 +489,7 @@ void toggle_pause(void *appstate) {
     }
 }
 
+// Reset the game board so that each cell is empty
 void initialize_game_board(Cell matrix[GAME_WIDTH][GAME_HEIGHT]) {
     for(int i = 0; i < GAME_WIDTH; i++) {
         for(int j = 0; j < GAME_HEIGHT; j++) {
@@ -499,32 +498,35 @@ void initialize_game_board(Cell matrix[GAME_WIDTH][GAME_HEIGHT]) {
     }
 }
 
+// Create required amount of characters, determine their starting positions, directions and attributes
 void initialize_characters(void *appstate) {
     AppState *as = (AppState *)appstate;
     int humans_added = 0;
     int computers_added = 0;
-    int total_players = as->num_human_players + as->num_computer_players;
-
+    int total_players = as->total_human_players + as->total_computer_players;
     for(int i = 0; i < total_players; i++) {
-        if(humans_added < as->num_human_players) {
-            as->character_ctx[i].is_computer = false;
+
+        // Add the character, set is_human and the player name
+        if(humans_added < as->total_human_players) {
+            as->character_ctx[i].is_human = true;
             humans_added++;
+            sprintf(as->character_ctx[i].player_name, "P%d", humans_added);
         } else {
-            as->character_ctx[i].is_computer = true;
+            as->character_ctx[i].is_human = false;
             computers_added++;
+            sprintf(as->character_ctx[i].player_name, "CPU%d", computers_added);
         }
+
+        // alive enabled
+        as->character_ctx[i].is_alive = true;
 
         // Set starting positions
         as->character_ctx[i].head_xpos = starting_positions[i][0];
         as->character_ctx[i].head_ypos = starting_positions[i][1];
         
         // Set player IDs
-        if(as->character_ctx[i].is_computer) {
-            as->character_ctx[i].player_id = computers_added + humans_added;
-        } else {
-            as->character_ctx[i].player_id = computers_added + humans_added;
-        }
-        
+        as->character_ctx[i].player_id = computers_added + humans_added;
+
         // Set starting direction
         switch (i) {
         case 0:
@@ -546,6 +548,7 @@ void initialize_characters(void *appstate) {
     }
 }
 
+// Kick off the core game cycle
 void start_game(void *appstate) {
     AppState *as = (AppState *)appstate;
 
@@ -555,23 +558,26 @@ void start_game(void *appstate) {
 
     // Set the number of players and computers
     if(as->game_mode == PVP) {
-        as->num_human_players = PLAYER_COUNT;
-        as->num_computer_players = 0;
+        as->total_human_players = 2;    // Todo - make this customizable
+        as->total_computer_players = 2; // Todo - make this customizable
     } else {
         // PVE
-        as->num_human_players = 1;
-        as->num_computer_players = 1;
+        as->total_human_players = 1;    // Todo - make this customizable
+        as->total_computer_players = 3; // Todo - make this customizable
     }
+ 
+    as->remaining_players = as->total_human_players + as->total_computer_players;
 
     initialize_characters(as);
 }
 
+// map key presses to specific characters and game controls such as pause, reset, enter etc.
 static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
     AppState *as = (AppState *)appstate;
     CharacterContext *ctx;
 
     // find out which player's key was pressed if any
-    for(int i = 0; i < PLAYER_COUNT; i++) {
+    for(int i = 0; i < as->total_human_players; i++) {
         for(int j = 0; j < 4; j++) {
             if(player_keys[i][j] == key_code) {
                 ctx = &as->character_ctx[i];
@@ -579,12 +585,13 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
             }
         }
     }
-
     switch (key_code) {
     /* Start the game. */
     case SDL_SCANCODE_KP_ENTER:
     case SDL_SCANCODE_RETURN:
         if(as->state == START) {
+            //go to start2
+            //if start2
             start_game(as);
         }
         break;
@@ -595,7 +602,6 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
     /* Restart the game as if the program was launched. */
     case SDL_SCANCODE_R:
     case SDL_SCANCODE_SPACE:
-        // TODO - check state is game over?
         start_game(as);
         break;
     /* Decide new direction of the character. */
@@ -639,7 +645,7 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
     return SDL_APP_CONTINUE;
 }
 
-/* This function runs once at startup. */
+// This function runs once at startup
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {    
     
     // AppState stores various game specific information
@@ -680,7 +686,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     return SDL_APP_CONTINUE;
 }
 
-/* This function runs when a new event (mouse input, keypresses, etc) occurs. */
+// This function runs when a new event (mouse input, keypresses, etc) occurs
 SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
     AppState *as = (AppState *)appstate;
     switch (event->type) {
@@ -694,33 +700,39 @@ SDL_AppResult SDL_AppEvent(void *appstate, SDL_Event *event) {
     return SDL_APP_CONTINUE;
 }
 
-/* This function runs once per frame, and is the heart of the program. */
+// This function runs once per frame, and is the heart of the program
 SDL_AppResult SDL_AppIterate(void *appstate) {
     AppState *as = (AppState *)appstate;
     StartMenu start_menu;
     Menu start_sub_menu;
     Menu pause_menu;
     Menu game_over_menu;
-    char winner_text_buffer[20];
+    char winner_text_buffer[50];
     const Uint64 now = SDL_GetTicks();
     SDL_FRect r;
     int cell;
-
-    // Update characters positions internally if game is not paused
-    while (as->state == RUNNING && ((now - as->last_step) >= STEP_RATE_IN_MILLISECONDS)) {
-        move_characters(as); // TODO - move the above if statement to move_players()?
-        as->last_step += STEP_RATE_IN_MILLISECONDS;
-    }
 
     draw_background(as->renderer, &COLOR_BG, &COLOR_BG_OUTLINE);
 
     switch (as->state) {
     case RUNNING:
+        // Update characters positions internally if game is not paused
+        while (now - as->last_step >= STEP_RATE_IN_MILLISECONDS) {
+            move_characters(as); 
+            as->last_step += STEP_RATE_IN_MILLISECONDS;
+        }
+        if(as->remaining_players <= 1) {
+            as->state = GAME_OVER;
+            set_winner(as);
+            printf("from AppIterate after set_winner: %s\n",as->winner);
+        }
         draw_game_board(as->renderer, as->matrix);
         break;
     case PAUSED: 
-        //pause_game()
         draw_game_board(as->renderer, as->matrix);
+        for(int i = 0; i < 4; i++) {
+            printf("%d: pid: %d, name: %s\n",as->character_ctx[i].player_id,i,as->character_ctx[i].player_name);
+        }
         pause_menu.title = "PAUSED";
         pause_menu.msg = "";
         pause_menu.msg2 = "Press P to continue";
@@ -732,12 +744,13 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         pause_menu.outline_color = MENU_OUTLINE_COLOR;
         pause_menu.title_font_color = MENU_TITLE_COLOR;
         pause_menu.msg_font_color = MENU_MESSAGE_COLOR;
-        //draw_menu(as->renderer, pause_menu);
+        draw_menu(as->renderer, pause_menu);
         break;
     case GAME_OVER:
-        //game_over()
+        draw_game_board(as->renderer, as->matrix);
+        //printf("winner_id: %d, winner name: %s\n",as->winner_id,as->character_ctx[as->winner_id].player_name);
+        sprintf(winner_text_buffer, "%s WINS", as->winner);
         game_over_menu.title = "GAME OVER";
-        sprintf(winner_text_buffer, "P%d WINS", as->winner);
         game_over_menu.msg  = winner_text_buffer;
         game_over_menu.msg2 = "Press SPACE to restart";
         game_over_menu.x = SDL_WINDOW_WIDTH / 3;
@@ -773,7 +786,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     return SDL_APP_CONTINUE;
 }
 
-/* This function runs once at shutdown. */
+// This function runs once at shutdown
 void SDL_AppQuit(void *appstate, SDL_AppResult result)
 {
     if (appstate != NULL) {
