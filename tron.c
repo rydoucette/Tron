@@ -10,21 +10,10 @@
   freely.
 
   TODO
-    ~ Bugs ~
-    * out of bounds
-    * player id wins
-    ~ Features ~
-    * Add AI for computer players
-    * Add support for more players/computers
-    * Add visual effects - tail, where you crashed
+    * Add more complex AI for computer players
+    * Add support for modifying game setting
+    * Add visual effects on tails
     * Add items
-    * add AI difficulty levels
-    ~ Maintenance ~
-    * Seperate code into different files
-    * Better null checks,logging and error handling
-    * State machine & simplify iterat into calling functions depending on state 
-    * Menu handling: Reduce repeated code, add color for msg2
-    * Documentation
 */
 #define SDL_MAIN_USE_CALLBACKS 1  /* use the callbacks instead of main() */
 #include <stdio.h>
