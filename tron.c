@@ -45,15 +45,17 @@
 // SDL static variables
 static SDL_Window *window = NULL;
 static SDL_Renderer *renderer = NULL;
+static SDL_AudioDeviceID audio_device = 0;
 
 // Cell on the game board - shows if any player occupies that square
 typedef enum
 {
     CELL_NOTHING = 0U,
-    CELL_P1 = 1U,
-    CELL_P2 = 2U,
-    CELL_P3 = 3U,
-    CELL_P4 = 4U,
+    CELL_P1 =   1U,
+    CELL_P2 =   2U,
+    CELL_P3 =   3U,
+    CELL_P4 =   4U,
+    CELL_DEAD = 5U
 } Cell;
 
 // possible states the game can be in
@@ -121,6 +123,7 @@ typedef struct
     int remaining_players;
     char winner[20];
     Uint64 pause_time;
+    bool is_muted;
     Uint64 last_step;
 } AppState;
 
@@ -144,6 +147,15 @@ typedef struct
     Menu menu;
 } StartMenu;
 
+// things that are playing sound (the audiostream itself, plus the original data, so we can refill to loop
+typedef struct Sound {
+    Uint8 *wav_data;
+    Uint32 wav_data_len;
+    SDL_AudioStream *stream;
+} Sound;
+
+static Sound sounds[2];
+
 // Colors
 static const SDL_Color COLOR_BG                   = {8, 12, 20, SDL_ALPHA_OPAQUE};     // Deep faded blue
 static const SDL_Color COLOR_BG_OUTLINE           = {18, 24, 35, SDL_ALPHA_OPAQUE};    // Subtle grid outline
@@ -157,6 +169,7 @@ static const SDL_Color COLOR_P1                   = {0, 255, 255, SDL_ALPHA_OPAQ
 static const SDL_Color COLOR_P2                   = {255, 0, 255, SDL_ALPHA_OPAQUE};    // Magenta (cyberpunky)
 static const SDL_Color COLOR_P3                   = {255, 165, 0, SDL_ALPHA_OPAQUE};    // Orange (warm neon)
 static const SDL_Color COLOR_P4                   = {0, 255, 128, SDL_ALPHA_OPAQUE};    // Mint green (futuristic)
+static const SDL_Color COLOR_CRASHED              = {90, 100, 110, SDL_ALPHA_OPAQUE};
 
 // helper function to create rectangle objects
 static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short scaler)
@@ -167,14 +180,15 @@ static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short 
     r->h = BLOCK_SIZE_IN_PIXELS * scaler;
 }
 
-// cell in a matrix will be mapped to a player. This maps each player to a sepcific color
+// cell in a matrix will be mapped to a player. This maps each player to a sepcific color.
 static const SDL_Color get_color_for_cell(Cell cell) {
     switch (cell) {
-        case CELL_P1: return COLOR_P1;
-        case CELL_P2: return COLOR_P2;
-        case CELL_P3: return COLOR_P3;
-        case CELL_P4: return COLOR_P4;
-        default:      return COLOR_BG;
+        case CELL_P1:   return COLOR_P1;
+        case CELL_P2:   return COLOR_P2;
+        case CELL_P3:   return COLOR_P3;
+        case CELL_P4:   return COLOR_P4;
+        case CELL_DEAD: return COLOR_CRASHED;
+        default:        return COLOR_BG;
     }
 }
 
@@ -191,7 +205,6 @@ static void draw_menu(SDL_Renderer *renderer, Menu menu) {
     SDL_FRect menu_rect = {menu.x, menu.y, menu.w, menu.h };
     SDL_FRect title_text_rect;
     SDL_FRect msg_text_rect;
-
     // Menu Background
     set_sdl_color(renderer, &menu.bg_color); 
     SDL_RenderFillRect(renderer, &menu_rect);
@@ -201,7 +214,7 @@ static void draw_menu(SDL_Renderer *renderer, Menu menu) {
     SDL_RenderRect(renderer, &menu_rect);
 
     // Title Text
-    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 36.0f);
+    font = TTF_OpenFont("ressources/fonts/Audiowide-Regular.ttf", 36.0f);
     surface = TTF_RenderText_Blended(font, menu.title, 0, menu.title_font_color);
     texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
@@ -215,7 +228,7 @@ static void draw_menu(SDL_Renderer *renderer, Menu menu) {
     TTF_CloseFont(font);
 
     // Message Text
-    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 18.0f);
+    font = TTF_OpenFont("ressources/fonts/Audiowide-Regular.ttf", 18.0f);
     surface = TTF_RenderText_Blended(font, menu.msg, 0, menu.msg_font_color);
     texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
@@ -229,7 +242,7 @@ static void draw_menu(SDL_Renderer *renderer, Menu menu) {
     TTF_CloseFont(font);
 
     // Message Text
-    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 18.0f);
+    font = TTF_OpenFont("ressources/fonts/Audiowide-Regular.ttf", 18.0f);
     surface = TTF_RenderText_Blended(font, menu.msg2, 0, menu.msg_font_color);
     texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
@@ -263,7 +276,7 @@ static void draw_start_menu(SDL_Renderer *renderer, GameMode game_mode, StartMen
     }
 
     // Message Text
-    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 18.0f);
+    font = TTF_OpenFont("ressources/fonts/Audiowide-Regular.ttf", 18.0f);
     surface = TTF_RenderText_Blended(font, "Player vs Player", 0, option_color_1);
     texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
@@ -277,7 +290,7 @@ static void draw_start_menu(SDL_Renderer *renderer, GameMode game_mode, StartMen
     TTF_CloseFont(font);
 
     // Message Text
-    font = TTF_OpenFont("fonts/Audiowide-Regular.ttf", 18.0f);
+    font = TTF_OpenFont("ressources/fonts/Audiowide-Regular.ttf", 18.0f);
     surface = TTF_RenderText_Blended(font, "Player vs AI", 0, option_color_2);
     texture = SDL_CreateTextureFromSurface(renderer, surface);
     SDL_DestroySurface(surface);
@@ -299,11 +312,9 @@ void set_winner(void *appstate) {
     for(int i = 0; i < total_players; i++) {
         ctx = as->character_ctx[i];
         if(ctx.is_alive) {
-            printf("player_name of last alive: as->character_ctx[i].player_name\n");
             strcpy(as->winner,as->character_ctx[i].player_name);
         }
     }
-    printf("set_winner=>%s\n", as->winner);
 }
 // Draw background, first thing that will get drawn on every game cycle
 static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, const SDL_Color *bg_outline_color) {
@@ -439,6 +450,33 @@ void move_head(CharacterContext *ctx) {
     }
 }
 
+void handle_collision(void *appstate, int player_id) {
+    AppState *as = (AppState *)appstate;
+
+    int index = -1;
+    for(int i = 0; i < PLAYER_COUNT; i++) {
+        if(as->character_ctx[i].player_id == player_id) {
+            index = i;
+            break;
+        }
+    }
+
+    as->character_ctx[index].is_alive = false;
+    as->remaining_players--; 
+
+    for(int i = 0; i < GAME_WIDTH; i++) {
+        for(int j = 0; j < GAME_HEIGHT; j++) {
+            if(as->matrix[i][j] == (Cell) player_id)
+                as->matrix[i][j] = CELL_DEAD;
+        }
+    }
+
+    if (SDL_GetAudioStreamQueued(sounds[1].stream) < ((int) sounds[1].wav_data_len)) {
+        SDL_PutAudioStreamData(sounds[1].stream, sounds[1].wav_data, (int) sounds[1].wav_data_len);
+    }
+
+}
+
 // Checks what direction player has inputed, updates position and checks for collision
 void move_player(CharacterContext *ctx, void *appstate) {
     AppState *as = (AppState *)appstate;
@@ -450,8 +488,7 @@ void move_player(CharacterContext *ctx, void *appstate) {
         ctx->next_dir = pick_next_dir(as->matrix, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
     move_head(ctx);
     if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
-        ctx->is_alive = false;
-        as->remaining_players--;
+        handle_collision(as, ctx->player_id);
     } else {
         as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
     }
@@ -468,6 +505,15 @@ void move_characters(void *appstate) {
         if(ctx->is_alive)
             move_player(ctx, as);
     }
+}
+
+void toggle_mute(void *appstate) {
+    AppState *as = (AppState *)appstate;
+    float volume = 0.0;
+    if(as->is_muted)
+        volume = 1.0;
+    as->is_muted = !as->is_muted;
+    SDL_SetAudioDeviceGain(audio_device, volume);
 }
 
 // Pause and unpause the game depending on current state
@@ -558,12 +604,11 @@ void start_game(void *appstate) {
 
     // Set the number of players and computers
     if(as->game_mode == PVP) {
-        as->total_human_players = 2;    // Todo - make this customizable
-        as->total_computer_players = 2; // Todo - make this customizable
+        as->total_human_players = 2;                 // Todo - make this customizable
+        as->total_computer_players = PLAYER_COUNT-2; // Todo - make this customizable
     } else {
-        // PVE
-        as->total_human_players = 1;    // Todo - make this customizable
-        as->total_computer_players = 3; // Todo - make this customizable
+        as->total_human_players = 1;                  // Todo - make this customizable
+        as->total_computer_players = PLAYER_COUNT -1; // Todo - make this customizable
     }
  
     as->remaining_players = as->total_human_players + as->total_computer_players;
@@ -571,10 +616,40 @@ void start_game(void *appstate) {
     initialize_characters(as);
 }
 
+static bool init_sound(const char *fname, Sound *sound)
+{
+    bool retval = false;
+    SDL_AudioSpec spec;
+    char *wav_path = NULL;
+
+    /* Load the .wav files from wherever the app is being run from. */
+    SDL_asprintf(&wav_path, "%s", fname);  /* allocate a string of the full file path */
+    if (!SDL_LoadWAV(wav_path, &spec, &sound->wav_data, &sound->wav_data_len)) {
+        SDL_Log("Couldn't load .wav file: %s", SDL_GetError());
+        return false;
+    }
+
+    /* Create an audio stream. Set the source format to the wav's format (what
+       we'll input), leave the dest format NULL here (it'll change to what the
+       device wants once we bind it). */
+    sound->stream = SDL_CreateAudioStream(&spec, NULL);
+    if (!sound->stream) {
+        SDL_Log("Couldn't create audio stream: %s", SDL_GetError());
+    } else if (!SDL_BindAudioStream(audio_device, sound->stream)) {  /* once bound, it'll start playing when there is data available! */
+        SDL_Log("Failed to bind '%s' stream to device: %s", fname, SDL_GetError());
+    } else {
+        retval = true;  /* success! */
+    }
+
+    SDL_free(wav_path);  /* done with this string. */
+    return retval;
+}
+
+
 // map key presses to specific characters and game controls such as pause, reset, enter etc.
 static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
     AppState *as = (AppState *)appstate;
-    CharacterContext *ctx;
+    CharacterContext *ctx = NULL;
 
     // find out which player's key was pressed if any
     for(int i = 0; i < as->total_human_players; i++) {
@@ -639,6 +714,8 @@ static SDL_AppResult handle_key_event(void *appstate, SDL_Scancode key_code) {
     case SDL_SCANCODE_P:
         toggle_pause(as);
         break;
+    case SDL_SCANCODE_M:
+        toggle_mute(as);
     default:
         break;
     }
@@ -655,6 +732,12 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     }
     *appstate = as;
 
+    /* SDL */
+    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {
+        SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
+        return SDL_APP_FAILURE;
+    }
+
     /* Create the window and renderer */
     if (!SDL_CreateWindowAndRenderer("TRON", SDL_WINDOW_WIDTH, SDL_WINDOW_HEIGHT, 0, &as->window, &as->renderer)) {
         return SDL_APP_FAILURE;
@@ -665,23 +748,31 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
         return SDL_APP_FAILURE;
     }
 
-    /* SDL */
-    if (!SDL_Init(SDL_INIT_VIDEO)) {
-        SDL_Log("Couldn't initialize SDL: %s", SDL_GetError());
-        return SDL_APP_FAILURE;
-    }
-
     /* SDL_ttf */
     if (!TTF_Init()) {
         SDL_Log("Couldn't initialise SDL_ttf: %s\n", SDL_GetError());
         return SDL_APP_FAILURE;
     }
 
+     /* open the default audio device in whatever format it prefers; our audio streams will adjust to it. */
+     audio_device = SDL_OpenAudioDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, NULL);
+     if (audio_device == 0) {
+         SDL_Log("Couldn't open audio device: %s", SDL_GetError());
+         return SDL_APP_FAILURE;
+     }
+ 
+     if (!init_sound("ressources/sounds/neon-dreams.wav", &sounds[0])) {
+         return SDL_APP_FAILURE;
+     } else if (!init_sound("ressources/sounds/crash.wav", &sounds[1])) {
+         return SDL_APP_FAILURE;
+     }
+
     /* Initialize some required AppState variables. The rest gets covered on game start */
     as->state      = START;
     as->pause_time = SDL_GetTicks();
     as->last_step  = SDL_GetTicks();
     as->game_mode  = PVP;
+    as->is_muted   = false;
 
     return SDL_APP_CONTINUE;
 }
@@ -712,8 +803,14 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     SDL_FRect r;
     int cell;
 
-    draw_background(as->renderer, &COLOR_BG, &COLOR_BG_OUTLINE);
+    for (int i = 0; i < 1; i++) {
+        if (SDL_GetAudioStreamQueued(sounds[i].stream) < ((int) sounds[i].wav_data_len)) {
+            SDL_PutAudioStreamData(sounds[i].stream, sounds[i].wav_data, (int) sounds[i].wav_data_len);
+        }
+    } 
 
+    draw_background(as->renderer, &COLOR_BG, &COLOR_BG_OUTLINE);
+    
     switch (as->state) {
     case RUNNING:
         // Update characters positions internally if game is not paused
@@ -724,15 +821,11 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         if(as->remaining_players <= 1) {
             as->state = GAME_OVER;
             set_winner(as);
-            printf("from AppIterate after set_winner: %s\n",as->winner);
         }
         draw_game_board(as->renderer, as->matrix);
         break;
     case PAUSED: 
         draw_game_board(as->renderer, as->matrix);
-        for(int i = 0; i < 4; i++) {
-            printf("%d: pid: %d, name: %s\n",as->character_ctx[i].player_id,i,as->character_ctx[i].player_name);
-        }
         pause_menu.title = "PAUSED";
         pause_menu.msg = "";
         pause_menu.msg2 = "Press P to continue";
@@ -748,7 +841,6 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         break;
     case GAME_OVER:
         draw_game_board(as->renderer, as->matrix);
-        //printf("winner_id: %d, winner name: %s\n",as->winner_id,as->character_ctx[as->winner_id].player_name);
         sprintf(winner_text_buffer, "%s WINS", as->winner);
         game_over_menu.title = "GAME OVER";
         game_over_menu.msg  = winner_text_buffer;
@@ -794,5 +886,14 @@ void SDL_AppQuit(void *appstate, SDL_AppResult result)
         SDL_DestroyRenderer(as->renderer);
         SDL_DestroyWindow(as->window);
         SDL_free(as);
+    }
+
+    SDL_CloseAudioDevice(audio_device);
+ 
+    for (int i = 0; i < SDL_arraysize(sounds); i++) {
+        if (sounds[i].stream) {
+            SDL_DestroyAudioStream(sounds[i].stream);
+        }
+        SDL_free(sounds[i].wav_data);
     }
 }
