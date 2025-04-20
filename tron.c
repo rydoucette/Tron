@@ -29,6 +29,7 @@
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
 #define BACKGROUND_SCALE 4
 #define STEP_RATE_IN_MILLISECONDS 45
+#define ITEM_RATE_IN_MILLISECONDS 10000
 #define PLAYER_COUNT 4 // Todo - make this customizable
 
 // SDL static variables
@@ -114,6 +115,7 @@ typedef struct
     Uint64 pause_time;
     bool is_muted;
     Uint64 last_step;
+    Uint64 last_item;
 } AppState;
 
 typedef struct
@@ -335,6 +337,10 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
             }
         }
     }
+}
+
+void spawn_item(void *appstate) {
+    printf("spawn item"\n);
 }
 
 // checks if player collided with another player
@@ -590,6 +596,7 @@ void start_game(void *appstate) {
     initialize_game_board(as->matrix);
     as->state = RUNNING;
     as->last_step  = SDL_GetTicks();
+    as->last_item  = SDL_GetTicks();
 
     // Set the number of players and computers
     if(as->game_mode == PVP) {
@@ -802,6 +809,13 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     
     switch (as->state) {
     case RUNNING:
+        
+        // Spawn items
+        while(now - as->last_item >= ITEM_RATE_IN_MILLISECONDS) {
+            spawn_item(as);
+            as->last_item += STEP_RATE_IN_MILLISECONDS;
+        }
+
         // Update characters positions internally if game is not paused
         while (now - as->last_step >= STEP_RATE_IN_MILLISECONDS) {
             move_characters(as); 
