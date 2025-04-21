@@ -10,6 +10,9 @@
   freely.
 
   TODO
+    * inputing a couple keys really quick (ex: heading right and inputting up->left quickly) results in a death
+    * can move through dead cells
+
     * Add more complex AI for computer players
     * Add support for modifying game setting
     * Add visual effects on tails
@@ -29,7 +32,7 @@
 #define SDL_WINDOW_WIDTH           (BLOCK_SIZE_IN_PIXELS * GAME_WIDTH)
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
 #define BACKGROUND_SCALE 2
-#define STEP_RATE_IN_MILLISECONDS 45
+#define STEP_RATE_IN_MILLISECONDS 55
 #define ITEM_RATE_IN_MILLISECONDS 1000
 #define PLAYER_COUNT 4 // Todo - make this customizable
 
@@ -41,13 +44,13 @@ static SDL_AudioDeviceID audio_device = 0;
 // Cell on the game board - shows if any player occupies that square
 typedef enum
 {
-    CELL_NOTHING = 0U,
-    CELL_P1 =   1U,
-    CELL_P2 =   2U,
-    CELL_P3 =   3U,
-    CELL_P4 =   4U,
-    CELL_ITEM = 5U,
-    CELL_DEAD = 6U
+    CELL_NOTHING   = 0U,
+    CELL_P1        = 1U,
+    CELL_P2        = 2U,
+    CELL_P3        = 3U,
+    CELL_P4        = 4U,
+    CELL_DEAD      = 5U, 
+    CELL_ITEM_STAR = 6U
 } Cell;
 
 // possible states the game can be in
@@ -166,13 +169,14 @@ static const SDL_Color COLOR_P3                   = {255, 165, 0, SDL_ALPHA_OPAQ
 static const SDL_Color COLOR_P4                   = {0, 255, 128, SDL_ALPHA_OPAQUE};    // Mint green (futuristic)
 static const SDL_Color COLOR_CRASHED              = {90, 100, 110, SDL_ALPHA_OPAQUE};
 
-// helper function to create rectangle objects
-static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h, short scaler)
+// helper to create rectangle objects, x and y coords will be the position on the 2d matrix,
+// but has to be scaled for the window size
+static void set_rect_xy(SDL_FRect *r, short x, short y, short w, short h)
 {
     r->x = (float)(x * BLOCK_SIZE_IN_PIXELS);
     r->y = (float)(y * BLOCK_SIZE_IN_PIXELS);
-    r->w = BLOCK_SIZE_IN_PIXELS * scaler;
-    r->h = BLOCK_SIZE_IN_PIXELS * scaler;
+    r->w = (float)(w);
+    r->h = (float)(h);
 }
 
 // cell in a matrix will be mapped to a player. This maps each player to a sepcific color.
@@ -319,7 +323,7 @@ static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, c
     set_sdl_color(renderer, bg_outline_color);
     for(int i = 0; i < GAME_WIDTH; i += BACKGROUND_SCALE) {
         for(int j = 0; j < GAME_HEIGHT; j += BACKGROUND_SCALE) {
-            set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS, BACKGROUND_SCALE);
+            set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS*BACKGROUND_SCALE, BLOCK_SIZE_IN_PIXELS*BACKGROUND_SCALE);
             SDL_RenderRect(renderer, &r);
         }
     } 
@@ -328,7 +332,7 @@ static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, c
 static void draw_item(SDL_Renderer *renderer, int x, int y) {
     SDL_Texture *texture = NULL;
     SDL_Surface *surface = NULL;
-    SDL_FRect r = {(x*BLOCK_SIZE_IN_PIXELS),(y*BLOCK_SIZE_IN_PIXELS),BLOCK_SIZE_IN_PIXELS,BLOCK_SIZE_IN_PIXELS};
+    SDL_FRect r;
     int texture_width = 0;
     int texture_height = 0;
     surface = IMG_Load("ressources/sprites/star.png");
@@ -341,7 +345,7 @@ static void draw_item(SDL_Renderer *renderer, int x, int y) {
     if (!texture) {
         SDL_Log("Couldn't create static texture: %s", SDL_GetError());
     }
-    //set_rect_xy(&r, x, y, 1, 1, 2);
+    set_rect_xy(&r, x, y, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS);
     SDL_RenderTexture(renderer, texture, NULL, &r);
     SDL_DestroySurface(surface);  /* done with this, the texture has a copy of the pixels now. */
 }
@@ -354,20 +358,24 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
     for (int i = 0; i < GAME_WIDTH; i++) {
         for (int j = 0; j < GAME_HEIGHT; j++) {
             cell = matrix[i][j];
-            if(cell != CELL_NOTHING) {
+            // End early if nothing at this cell
+            if(cell == CELL_NOTHING)
+                continue;
+            // draw players
+            if(cell >= CELL_P1 && cell <= CELL_DEAD) {
                 SDL_Color cell_color = get_color_for_cell(cell);
                 set_sdl_color(renderer, &cell_color);
-                set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS, 1);
+                set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS);
                 SDL_RenderFillRect(renderer, &r);
-            }
-            if(cell == CELL_ITEM) {
+            } else {
+                // If not cell nothing or player then it has to be an item
                 draw_item(renderer,i,j);
             }
         }
     }
 }
 
-// todo clean up
+// Spawns an item in a randon unoccupied space
 void spawn_item(void *appstate) {
     AppState *as = (AppState *)appstate;
     int x_coord = SDL_rand(GAME_WIDTH);
@@ -378,12 +386,12 @@ void spawn_item(void *appstate) {
         y_coord = SDL_rand(GAME_HEIGHT);
         cell = as->matrix[x_coord][y_coord];
     }
-    as->matrix[x_coord][y_coord] = CELL_ITEM;
+    as->matrix[x_coord][y_coord] = CELL_ITEM_STAR;
 }
 
 // checks if player collided with another player
 bool collides_with_player(Cell matrix[GAME_WIDTH][GAME_HEIGHT], int x, int y) {
-    if(matrix[x][y] != CELL_NOTHING)
+    if(matrix[x][y] >= CELL_P1 && matrix[x][y] <= CELL_DEAD)
         return true;
     return false;
 }
@@ -510,20 +518,50 @@ void handle_collision(void *appstate, int player_id) {
 
 }
 
+// Handle any special events
+void on_player_touch(void *appstate, CharacterContext *ctx, Cell cell) {
+    AppState *as = (AppState *)appstate;
+    switch(cell) {
+        case CELL_NOTHING:
+            break;
+        case CELL_P1:
+        case CELL_P2:
+        case CELL_P3:
+        case CELL_P4:
+            break;
+        case CELL_DEAD:
+            break;
+        case CELL_ITEM_STAR:
+            as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
+            // player is invincible
+            break;
+        default:
+            SDL_Log("ERROR - unexpected cell: %d\n", cell);
+    }
+}
+
 // Checks what direction player has inputed, updates position and checks for collision
 void move_player(CharacterContext *ctx, void *appstate) {
     AppState *as = (AppState *)appstate;
+    
     if (collides_with_wall(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
         SDL_Log("ERROR - The player: %d moved out of bounds at an unexpected time \n", ctx->player_id);
     }
+
     // if player is a computer, determine which direction go
-    if(!ctx->is_human)
+    if(!ctx->is_human) {
         ctx->next_dir = pick_next_dir(as->matrix, ctx->head_xpos, ctx->head_ypos, ctx->next_dir);
+    }
+
     move_head(ctx);
+    Cell new_cell = as->matrix[ctx->head_xpos][ctx->head_ypos];
+
     if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
         handle_collision(as, ctx->player_id);
     } else {
+        // update player position on the board and handle any special cases such as items
         as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
+        on_player_touch(as, ctx, new_cell);
     }
 }
 
@@ -602,9 +640,12 @@ void initialize_characters(void *appstate) {
         // Set starting positions
         as->character_ctx[i].head_xpos = starting_positions[i][0];
         as->character_ctx[i].head_ypos = starting_positions[i][1];
-        
+
         // Set player IDs
         as->character_ctx[i].player_id = computers_added + humans_added;
+        
+        // mark the first spot on game board
+        as->matrix[as->character_ctx[i].head_xpos][as->character_ctx[i].head_ypos] = as->character_ctx[i].player_id;
 
         // Set starting direction
         switch (i) {
@@ -630,7 +671,11 @@ void initialize_characters(void *appstate) {
 // Kick off the core game cycle
 void start_game(void *appstate) {
     AppState *as = (AppState *)appstate;
-
+    printf("starting positions\n");
+    printf("0:%d,%d\n",starting_positions[0][0],starting_positions[0][1]);
+    printf("1:%d,%d\n",starting_positions[1][0],starting_positions[1][1]);
+    printf("2:%d,%d\n",starting_positions[2][0],starting_positions[2][1]);
+    printf("3:%d,%d\n",starting_positions[3][0],starting_positions[3][1]);
     initialize_game_board(as->matrix);
     as->state = RUNNING;
     as->last_step  = SDL_GetTicks();
@@ -806,7 +851,7 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
     as->pause_time = SDL_GetTicks();
     as->last_step  = SDL_GetTicks();
     as->game_mode  = PVP;
-    as->is_muted   = false;
+    toggle_mute(as);
 
     return SDL_APP_CONTINUE;
 }
@@ -847,18 +892,18 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     
     switch (as->state) {
     case RUNNING:
-        
-        // Spawn items
+        // Spawn item
         while(now - as->last_item >= ITEM_RATE_IN_MILLISECONDS) {
+            printf("call spawn item\n");
             spawn_item(as);
             as->last_item += ITEM_RATE_IN_MILLISECONDS;
         }
-
-        // Update characters positions internally if game is not paused
-        while (now - as->last_step >= STEP_RATE_IN_MILLISECONDS) {
+        // Update character positions internally
+        while(now - as->last_step >= STEP_RATE_IN_MILLISECONDS) {
             move_characters(as); 
             as->last_step += STEP_RATE_IN_MILLISECONDS;
         }
+        // Set the winner when one player remaining
         if(as->remaining_players <= 1) {
             as->state = GAME_OVER;
             set_winner(as);
