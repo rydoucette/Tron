@@ -20,16 +20,17 @@
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
 #include <SDL3_ttf/SDL_ttf.h>
+#include <SDL3_image/SDL_image.h>
 #include <stdbool.h>
 
-#define GAME_WIDTH  120U
-#define GAME_HEIGHT 90U
-#define BLOCK_SIZE_IN_PIXELS 8
+#define GAME_WIDTH  90U
+#define GAME_HEIGHT 60U
+#define BLOCK_SIZE_IN_PIXELS 16
 #define SDL_WINDOW_WIDTH           (BLOCK_SIZE_IN_PIXELS * GAME_WIDTH)
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
-#define BACKGROUND_SCALE 4
+#define BACKGROUND_SCALE 2
 #define STEP_RATE_IN_MILLISECONDS 45
-#define ITEM_RATE_IN_MILLISECONDS 10000
+#define ITEM_RATE_IN_MILLISECONDS 1000
 #define PLAYER_COUNT 4 // Todo - make this customizable
 
 // SDL static variables
@@ -45,7 +46,8 @@ typedef enum
     CELL_P2 =   2U,
     CELL_P3 =   3U,
     CELL_P4 =   4U,
-    CELL_DEAD = 5U
+    CELL_ITEM = 5U,
+    CELL_DEAD = 6U
 } Cell;
 
 // possible states the game can be in
@@ -153,6 +155,8 @@ static const SDL_Color COLOR_BG_OUTLINE           = {18, 24, 35, SDL_ALPHA_OPAQU
 static const SDL_Color MENU_COLOR                 = {15,15,35,SDL_ALPHA_OPAQUE};
 static const SDL_Color MENU_OUTLINE_COLOR         = {0,255,255,SDL_ALPHA_OPAQUE};
 static const SDL_Color MENU_TITLE_COLOR           = {255, 255, 255, SDL_ALPHA_OPAQUE};
+static const SDL_Color GAME_OVER_TITLE_COLOR      = {255,  60, 60, SDL_ALPHA_OPAQUE};
+static const SDL_Color PAUSE_TITLE_COLOR          = {255, 255, 255, SDL_ALPHA_OPAQUE};
 static const SDL_Color MENU_MESSAGE_COLOR         = {255, 255, 255, SDL_ALPHA_OPAQUE};
 static const SDL_Color HIGHLIGHTED_MENU_OPT_COLOR = {125, 249, 255, SDL_ALPHA_OPAQUE};
 static const SDL_Color DISABLED_MENU_OPT_COLOR    = {105, 105, 105, SDL_ALPHA_OPAQUE};
@@ -321,9 +325,30 @@ static void draw_background(SDL_Renderer *renderer, const SDL_Color *bg_color, c
     } 
 }
 
-// Draw each character and their tails on the game board
+static void draw_item(SDL_Renderer *renderer, int x, int y) {
+    SDL_Texture *texture = NULL;
+    SDL_Surface *surface = NULL;
+    SDL_FRect r = {(x*BLOCK_SIZE_IN_PIXELS),(y*BLOCK_SIZE_IN_PIXELS),BLOCK_SIZE_IN_PIXELS,BLOCK_SIZE_IN_PIXELS};
+    int texture_width = 0;
+    int texture_height = 0;
+    surface = IMG_Load("ressources/sprites/star.png");
+    if (!surface) {
+        SDL_Log("Could not load file: %s", SDL_GetError());
+    }
+    texture_width = surface->w;
+    texture_height = surface->h;
+    texture = SDL_CreateTextureFromSurface(renderer, surface);
+    if (!texture) {
+        SDL_Log("Couldn't create static texture: %s", SDL_GetError());
+    }
+    //set_rect_xy(&r, x, y, 1, 1, 2);
+    SDL_RenderTexture(renderer, texture, NULL, &r);
+    SDL_DestroySurface(surface);  /* done with this, the texture has a copy of the pixels now. */
+}
+
+// Draw each character and their tails on the game board 
+// todo clean up
 static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME_HEIGHT]) {
-    //int cell;
     int cell;
     SDL_FRect r;
     for (int i = 0; i < GAME_WIDTH; i++) {
@@ -335,12 +360,25 @@ static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME
                 set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS, 1);
                 SDL_RenderFillRect(renderer, &r);
             }
+            if(cell == CELL_ITEM) {
+                draw_item(renderer,i,j);
+            }
         }
     }
 }
 
+// todo clean up
 void spawn_item(void *appstate) {
-    printf("spawn item"\n);
+    AppState *as = (AppState *)appstate;
+    int x_coord = SDL_rand(GAME_WIDTH);
+    int y_coord = SDL_rand(GAME_HEIGHT);
+    Cell cell = as->matrix[x_coord][y_coord];
+    while(cell != CELL_NOTHING) {
+        x_coord = SDL_rand(GAME_WIDTH);
+        y_coord = SDL_rand(GAME_HEIGHT);
+        cell = as->matrix[x_coord][y_coord];
+    }
+    as->matrix[x_coord][y_coord] = CELL_ITEM;
 }
 
 // checks if player collided with another player
@@ -813,7 +851,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         // Spawn items
         while(now - as->last_item >= ITEM_RATE_IN_MILLISECONDS) {
             spawn_item(as);
-            as->last_item += STEP_RATE_IN_MILLISECONDS;
+            as->last_item += ITEM_RATE_IN_MILLISECONDS;
         }
 
         // Update characters positions internally if game is not paused
@@ -838,7 +876,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         pause_menu.h = SDL_WINDOW_HEIGHT / 2;
         pause_menu.bg_color = MENU_COLOR;
         pause_menu.outline_color = MENU_OUTLINE_COLOR;
-        pause_menu.title_font_color = MENU_TITLE_COLOR;
+        pause_menu.title_font_color = PAUSE_TITLE_COLOR;
         pause_menu.msg_font_color = MENU_MESSAGE_COLOR;
         draw_menu(as->renderer, pause_menu);
         break;
@@ -854,7 +892,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         game_over_menu.h = SDL_WINDOW_HEIGHT / 2;
         game_over_menu.bg_color = MENU_COLOR;
         game_over_menu.outline_color = MENU_OUTLINE_COLOR;
-        game_over_menu.title_font_color = MENU_TITLE_COLOR;
+        game_over_menu.title_font_color = GAME_OVER_TITLE_COLOR;
         game_over_menu.msg_font_color = MENU_MESSAGE_COLOR;    
         draw_menu(as->renderer, game_over_menu);
         break;
