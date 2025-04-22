@@ -1,22 +1,21 @@
 /*
-  Copyright (C) 1997-2025 Sam Lantinga <slouken@libsdl.org>
+  things I would do differently
+   * have code organized into different files (.h/.c) and try to have a more OOP approach
+   * Alot of logic depends on cell value, would be more maintanable to have funcs like is_player_cell(Cell cell) { return cell == P1 || cell == P2 ... } , is_wall, is_item
+   * Decouple my game logic/with rendering logic. functions draw_* should only really need the matrix, Game rules / special cases should somehow just be baked into the matrix. 
+    Maybe could increase the complexity of Cell to be a struct with different properties like a Cell and an Effect
 
-  This software is provided 'as-is', without any express or implied
-  warranty.  In no event will the authors be held liable for any damages
-  arising from the use of this software.
-
-  Permission is granted to anyone to use this software for any purpose,
-  including commercial applications, and to alter it and redistribute it
-  freely.
 
   TODO
+   Bugs
     * inputing a couple keys really quick (ex: heading right and inputting up->left quickly) results in a death
-    * can move through dead cells
 
     * Add more complex AI for computer players
-    * Add support for modifying game setting
-    * Add visual effects on tails
-    * Add items
+    * flasling light when star is running low
+    * Add support for modifying game settings including a more complex start menu
+    * Add more items
+    * Add a banner that shows some game info like muted/unmuted, info on power up like star remaining time, change win con to be best of 3 and show how many wins each player has
+    
 */
 #define SDL_MAIN_USE_CALLBACKS 1  /* use the callbacks instead of main() */
 #include <stdio.h>
@@ -33,7 +32,9 @@
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
 #define BACKGROUND_SCALE 2
 #define STEP_RATE_IN_MILLISECONDS 55
-#define ITEM_RATE_IN_MILLISECONDS 1000
+#define ITEM_RATE_IN_MILLISECONDS 3000
+#define STAR_TIME                 5000
+#define DEFAULT_VOLUME            0.5
 #define PLAYER_COUNT 4 // Todo - make this customizable
 
 // SDL static variables
@@ -50,7 +51,8 @@ typedef enum
     CELL_P3        = 3U,
     CELL_P4        = 4U,
     CELL_DEAD      = 5U, 
-    CELL_ITEM_STAR = 6U
+    CELL_ITEM_STAR = 6U,
+    CELL_ITEM_BOMB = 7U
 } Cell;
 
 // possible states the game can be in
@@ -61,6 +63,19 @@ typedef enum
     PAUSED = 2U,
     GAME_OVER = 3U
 } State;
+
+// possible effects that a character or game may posses that changes game logic or visuals
+typedef enum
+{
+    NONE       = 0U,
+    INVINSIBLE = 1U
+} Effect;
+
+typedef enum
+{
+    STAR = 0U,
+    BOMB = 1U
+} Item;
 
 // Possible Game Modes
 typedef enum
@@ -79,6 +94,8 @@ typedef struct
     char player_name[20];
     bool is_human;
     bool is_alive;
+    bool is_invinsible;
+    Uint64 invinsible_time;
 } CharacterContext;
 
 // possible direction
@@ -150,7 +167,7 @@ typedef struct Sound {
     SDL_AudioStream *stream;
 } Sound;
 
-static Sound sounds[2];
+static Sound sounds[3];
 
 // Colors
 static const SDL_Color COLOR_BG                   = {8, 12, 20, SDL_ALPHA_OPAQUE};     // Deep faded blue
@@ -168,6 +185,7 @@ static const SDL_Color COLOR_P2                   = {255, 0, 255, SDL_ALPHA_OPAQ
 static const SDL_Color COLOR_P3                   = {255, 165, 0, SDL_ALPHA_OPAQUE};    // Orange (warm neon)
 static const SDL_Color COLOR_P4                   = {0, 255, 128, SDL_ALPHA_OPAQUE};    // Mint green (futuristic)
 static const SDL_Color COLOR_CRASHED              = {90, 100, 110, SDL_ALPHA_OPAQUE};
+static const SDL_Color COLOR_INVINSIBLE           = {0, 255, 255, SDL_ALPHA_OPAQUE};
 
 // helper to create rectangle objects, x and y coords will be the position on the 2d matrix,
 // but has to be scaled for the window size
@@ -350,27 +368,55 @@ static void draw_item(SDL_Renderer *renderer, int x, int y) {
     SDL_DestroySurface(surface);  /* done with this, the texture has a copy of the pixels now. */
 }
 
-// Draw each character and their tails on the game board 
-// todo clean up
-static void draw_game_board(SDL_Renderer *renderer, Cell matrix[GAME_WIDTH][GAME_HEIGHT]) {
-    int cell;
+void draw_cell(SDL_Renderer *renderer, Cell cell, int x, int y, Effect effect) {
     SDL_FRect r;
+    switch(cell) {
+        case CELL_NOTHING:
+            break;
+        case CELL_P1:
+        case CELL_P2:
+        case CELL_P3:
+        case CELL_P4:
+        case CELL_DEAD:
+            SDL_Color cell_color = get_color_for_cell(cell);
+            set_sdl_color(renderer, &cell_color);
+            set_rect_xy(&r, x, y, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS);
+            if(effect == INVINSIBLE)
+                SDL_RenderRect(renderer, &r);  
+            else
+                SDL_RenderFillRect(renderer, &r);
+            break;
+        case CELL_ITEM_STAR:
+            draw_item(renderer,x,y);
+            break;
+        case CELL_ITEM_BOMB:
+            draw_item(renderer,x,y);
+            break;
+        default:
+            SDL_Log("ERROR - unexpected cell: %d\n", cell);
+    }
+}
+
+Effect get_cell_effect(void *appstate, Cell cell) {
+    AppState *as = (AppState *)appstate;
+    Effect effect = NONE;
+    if(cell >= CELL_P1 && cell <= CELL_P4) {
+        if(as->character_ctx[cell-1].is_invinsible)
+            return effect = INVINSIBLE;
+    }
+    return effect;
+}
+
+// Draw each character and their tails on the game board 
+static void draw_game_board(void *appstate) {
+    AppState *as = (AppState *)appstate;
+    Cell cell;
+    Effect effect = NONE;
     for (int i = 0; i < GAME_WIDTH; i++) {
         for (int j = 0; j < GAME_HEIGHT; j++) {
-            cell = matrix[i][j];
-            // End early if nothing at this cell
-            if(cell == CELL_NOTHING)
-                continue;
-            // draw players
-            if(cell >= CELL_P1 && cell <= CELL_DEAD) {
-                SDL_Color cell_color = get_color_for_cell(cell);
-                set_sdl_color(renderer, &cell_color);
-                set_rect_xy(&r, i, j, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS);
-                SDL_RenderFillRect(renderer, &r);
-            } else {
-                // If not cell nothing or player then it has to be an item
-                draw_item(renderer,i,j);
-            }
+            cell = as->matrix[i][j];
+            effect = get_cell_effect(as, cell);
+            draw_cell(as->renderer,cell,i,j,effect);
         }
     }
 }
@@ -386,7 +432,7 @@ void spawn_item(void *appstate) {
         y_coord = SDL_rand(GAME_HEIGHT);
         cell = as->matrix[x_coord][y_coord];
     }
-    as->matrix[x_coord][y_coord] = CELL_ITEM_STAR;
+    as->matrix[x_coord][y_coord] = CELL_ITEM_STAR + SDL_rand(1);
 }
 
 // checks if player collided with another player
@@ -521,6 +567,7 @@ void handle_collision(void *appstate, int player_id) {
 // Handle any special events
 void on_player_touch(void *appstate, CharacterContext *ctx, Cell cell) {
     AppState *as = (AppState *)appstate;
+    Uint64 now = SDL_GetTicks();
     switch(cell) {
         case CELL_NOTHING:
             break;
@@ -532,8 +579,12 @@ void on_player_touch(void *appstate, CharacterContext *ctx, Cell cell) {
         case CELL_DEAD:
             break;
         case CELL_ITEM_STAR:
-            as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
-            // player is invincible
+            as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id; //replace star with player block
+            ctx->is_invinsible = true;
+            ctx->invinsible_time = now;
+            if (SDL_GetAudioStreamQueued(sounds[2].stream) < ((int) sounds[2].wav_data_len)) {
+                SDL_PutAudioStreamData(sounds[2].stream, sounds[2].wav_data, (int) sounds[2].wav_data_len);
+            }
             break;
         default:
             SDL_Log("ERROR - unexpected cell: %d\n", cell);
@@ -556,12 +607,34 @@ void move_player(CharacterContext *ctx, void *appstate) {
     move_head(ctx);
     Cell new_cell = as->matrix[ctx->head_xpos][ctx->head_ypos];
 
-    if(is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos)) {
+    // check if the player crashed - when player has star power they can only crash with wall
+    bool crashed = false;
+    if(ctx->is_invinsible) {
+        crashed = collides_with_wall(as->matrix,ctx->head_xpos, ctx->head_ypos);
+    } else {
+        crashed = is_collision(as->matrix,ctx->head_xpos, ctx->head_ypos);
+    }
+
+    if(crashed) {
         handle_collision(as, ctx->player_id);
     } else {
         // update player position on the board and handle any special cases such as items
         as->matrix[ctx->head_xpos][ctx->head_ypos] = ctx->player_id;
         on_player_touch(as, ctx, new_cell);
+    }
+}
+
+// start time 
+// now 1500ms since start
+// invinsible time 1000ms since start
+// 1500 - 1000 = 500ms 
+// update the player status such as invulnerable
+void handle_invinsible(CharacterContext *ctx){
+    Uint64 now = SDL_GetTicks();
+    if(ctx->is_invinsible == true) {
+        if(now - ctx->invinsible_time > STAR_TIME) {
+            ctx->is_invinsible = false;
+        }
     }
 }
 
@@ -573,8 +646,10 @@ void move_characters(void *appstate) {
 
     for(int i = 0; i < total_players; i++) {
         ctx = &as->character_ctx[i];
-        if(ctx->is_alive)
-            move_player(ctx, as);
+        if(ctx->is_alive) {
+            handle_invinsible(ctx); //check invinsible status, and update if it should end
+            move_player(ctx, as); // update player position
+        }
     }
 }
 
@@ -582,7 +657,7 @@ void toggle_mute(void *appstate) {
     AppState *as = (AppState *)appstate;
     float volume = 0.0;
     if(as->is_muted)
-        volume = 1.0;
+        volume = DEFAULT_VOLUME;
     as->is_muted = !as->is_muted;
     SDL_SetAudioDeviceGain(audio_device, volume);
 }
@@ -644,6 +719,9 @@ void initialize_characters(void *appstate) {
         // Set player IDs
         as->character_ctx[i].player_id = computers_added + humans_added;
         
+        // players can use items to be come temporarirly invsible
+        as->character_ctx[i].is_invinsible = false;
+
         // mark the first spot on game board
         as->matrix[as->character_ctx[i].head_xpos][as->character_ctx[i].head_ypos] = as->character_ctx[i].player_id;
 
@@ -671,11 +749,6 @@ void initialize_characters(void *appstate) {
 // Kick off the core game cycle
 void start_game(void *appstate) {
     AppState *as = (AppState *)appstate;
-    printf("starting positions\n");
-    printf("0:%d,%d\n",starting_positions[0][0],starting_positions[0][1]);
-    printf("1:%d,%d\n",starting_positions[1][0],starting_positions[1][1]);
-    printf("2:%d,%d\n",starting_positions[2][0],starting_positions[2][1]);
-    printf("3:%d,%d\n",starting_positions[3][0],starting_positions[3][1]);
     initialize_game_board(as->matrix);
     as->state = RUNNING;
     as->last_step  = SDL_GetTicks();
@@ -839,11 +912,15 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char *argv[]) {
          SDL_Log("Couldn't open audio device: %s", SDL_GetError());
          return SDL_APP_FAILURE;
      }
+
+     SDL_SetAudioDeviceGain(audio_device,DEFAULT_VOLUME);
  
      if (!init_sound("ressources/sounds/neon-dreams.wav", &sounds[0])) {
          return SDL_APP_FAILURE;
      } else if (!init_sound("ressources/sounds/crash.wav", &sounds[1])) {
          return SDL_APP_FAILURE;
+     } else if(!init_sound("ressources/sounds/items-star.wav", &sounds[2])) {
+        return SDL_APP_FAILURE;
      }
 
     /* Initialize some required AppState variables. The rest gets covered on game start */
@@ -894,7 +971,6 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
     case RUNNING:
         // Spawn item
         while(now - as->last_item >= ITEM_RATE_IN_MILLISECONDS) {
-            printf("call spawn item\n");
             spawn_item(as);
             as->last_item += ITEM_RATE_IN_MILLISECONDS;
         }
@@ -908,10 +984,10 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
             as->state = GAME_OVER;
             set_winner(as);
         }
-        draw_game_board(as->renderer, as->matrix);
+        draw_game_board(as);
         break;
     case PAUSED: 
-        draw_game_board(as->renderer, as->matrix);
+        draw_game_board(as);
         pause_menu.title = "PAUSED";
         pause_menu.msg = "";
         pause_menu.msg2 = "Press P to continue";
@@ -926,7 +1002,7 @@ SDL_AppResult SDL_AppIterate(void *appstate) {
         draw_menu(as->renderer, pause_menu);
         break;
     case GAME_OVER:
-        draw_game_board(as->renderer, as->matrix);
+        draw_game_board(as);
         sprintf(winner_text_buffer, "%s WINS", as->winner);
         game_over_menu.title = "GAME OVER";
         game_over_menu.msg  = winner_text_buffer;
