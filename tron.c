@@ -25,13 +25,13 @@
 #include <SDL3_image/SDL_image.h>
 #include <stdbool.h>
 
-#define GAME_WIDTH  90U
-#define GAME_HEIGHT 60U
+#define GAME_WIDTH  60U
+#define GAME_HEIGHT 40U
 #define BLOCK_SIZE_IN_PIXELS 16
 #define SDL_WINDOW_WIDTH           (BLOCK_SIZE_IN_PIXELS * GAME_WIDTH)
 #define SDL_WINDOW_HEIGHT          (BLOCK_SIZE_IN_PIXELS * GAME_HEIGHT)
-#define BACKGROUND_SCALE 2
-#define STEP_RATE_IN_MILLISECONDS 55
+#define BACKGROUND_SCALE 1
+#define STEP_RATE_IN_MILLISECONDS 60
 #define ITEM_RATE_IN_MILLISECONDS 3000
 #define STAR_TIME                 5000
 #define DEFAULT_VOLUME            0.5
@@ -377,7 +377,7 @@ void draw_cell(SDL_Renderer *renderer, Cell cell, int x, int y, Effect effect) {
         case CELL_P2:
         case CELL_P3:
         case CELL_P4:
-        case CELL_DEAD:
+        case CELL_DEAD:{
             SDL_Color cell_color = get_color_for_cell(cell);
             set_sdl_color(renderer, &cell_color);
             set_rect_xy(&r, x, y, BLOCK_SIZE_IN_PIXELS, BLOCK_SIZE_IN_PIXELS);
@@ -385,7 +385,7 @@ void draw_cell(SDL_Renderer *renderer, Cell cell, int x, int y, Effect effect) {
                 SDL_RenderRect(renderer, &r);  
             else
                 SDL_RenderFillRect(renderer, &r);
-            break;
+            break;}
         case CELL_ITEM_STAR:
             draw_item(renderer,x,y);
             break;
